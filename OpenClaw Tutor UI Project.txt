@@ -1,0 +1,706 @@
+OpenClaw Tutor UI
+Project Design Brief
+1. Project Overview
+
+Build a desktop-style application that teaches beginners how to use OpenClaw AI agents through a guided, visual interface.
+
+The application should hide most of the underlying complexity of agent configuration and instead provide:
+
+a simple way to create or select an agent from preset personalities
+a chat interface for interacting with the agent
+a task/challenge board containing guided puzzles and missions
+dynamic UI controls for installed OpenClaw skills
+progressive onboarding that teaches the user how to use agents effectively
+
+The central product idea is:
+
+A beginner-friendly training environment where users learn how to use OpenClaw agents by solving guided challenges with the help of a tutor-style agent.
+
+This is not just an agent dashboard. It is a hybrid of:
+
+agent control interface
+tutorial system
+challenge/puzzle framework
+skill discovery UI
+2. Primary Goal
+
+Take a user who knows little or nothing about OpenClaw agents and guide them toward practical proficiency.
+
+The app should teach users:
+
+how to talk to an agent effectively
+how to choose appropriate skills/tools
+how to provide useful context
+how to solve progressively harder tasks with agents
+how to understand what the agent is doing
+
+The app should reduce fear, confusion, and setup friction.
+
+3. Product Vision
+
+The experience should feel like a training academy or guided sandbox rather than a raw engineering console.
+
+The user flow should feel like:
+
+Choose an agent
+Pick a challenge
+Interact with the agent
+Use skills through simple controls
+Submit the result
+Receive feedback and a lesson takeaway
+Unlock harder tasks
+
+The app should use progressive disclosure. Beginners should not be forced to understand raw config files, internal agent definitions, or complex command syntax immediately.
+
+4. Core Design Principles
+4.1 Simplicity First
+
+Hide complexity wherever possible. Give users a small number of obvious actions.
+
+4.2 Learn by Doing
+
+The main teaching mechanism is solving challenges with the agent, not reading documentation.
+
+4.3 Progressive Disclosure
+
+Start with safe, obvious features. Reveal deeper agent concepts later.
+
+4.4 Tool Transparency
+
+Users should be able to see, at an understandable level, what the agent is doing.
+
+4.5 Skill Discoverability
+
+Installed skills should be surfaced visually and made easy to invoke.
+
+4.6 Real Utility
+
+Challenges should not feel like fake toy puzzles forever. The progression should move toward real agent workflows such as code inspection, document analysis, and research.
+
+5. Target Users
+Primary User
+
+A beginner or intermediate user interested in AI agents but unfamiliar with OpenClaw internals.
+
+Secondary User
+
+A technical user who wants a more convenient training and experimentation interface for learning agent workflows.
+
+Not the Initial Target
+
+This is not initially for advanced power users who want total raw control over every underlying OpenClaw detail.
+
+6. Functional Scope
+
+The application should include the following major subsystems:
+
+6.1 Agent Selection / Creation
+
+Users can choose from a small set of predefined agent archetypes with preset personalities and capabilities.
+
+Examples:
+
+Tutor
+Researcher
+Analyst
+Mechanic
+Planner
+
+Each preset should map to:
+
+display name
+icon/avatar
+short description
+personality/system prompt template
+recommended skill categories
+difficulty suitability
+
+Later, users may be able to customize or create agents, but the first version should focus on presets.
+
+6.2 Chat Interface
+
+A conversational interface where the user can:
+
+talk with the selected agent
+ask for guidance
+request help solving a challenge
+issue commands in natural language
+
+The chat should support:
+
+user messages
+agent responses
+system notifications
+optional tool execution summaries
+6.3 Challenge Board
+
+A structured set of guided tasks or puzzles.
+
+The challenge board should support:
+
+challenge list
+challenge categories
+difficulty levels
+progress tracking
+active challenge details
+hints
+completion validation
+lesson summary after completion
+6.4 Skill Discovery and Invocation
+
+The system should detect installed OpenClaw skills and present them in a beginner-friendly way.
+
+The UI should auto-generate controls based on skill metadata where possible, such as:
+
+buttons
+forms
+parameter inputs
+descriptions
+examples
+
+The user should not need to manually remember skill syntax when a visual control can be generated.
+
+6.5 Tutor Guidance Layer
+
+The app should provide beginner-friendly coaching.
+
+This can be implemented either as:
+
+a dedicated tutor agent persona
+a guidance subsystem wrapping the selected agent
+contextual hint generation based on challenge state
+
+The guidance system should help users understand:
+
+what kinds of actions might help
+what skill could be useful
+why a previous attempt failed
+what concept they just learned
+6.6 Progress and Lessons
+
+The system should track:
+
+completed challenges
+unlocked categories
+concepts learned
+skill familiarity
+optional user proficiency level
+
+After challenge completion, the app should present a short “What you learned” summary.
+
+7. User Experience Model
+7.1 Main Layout
+
+Recommended initial layout:
+
+Left Panel: Agent Dock
+
+Shows:
+
+current selected agent
+agent description
+installed/recommended skills
+capability badges
+switch agent button
+Center Panel: Challenge Board
+
+Shows:
+
+active challenge
+mission goal
+challenge description
+hints
+submit answer / validate result
+challenge progression or map
+Right Panel: Chat + Skills
+
+Shows:
+
+conversation history
+chat input
+skill buttons/forms
+activity log of actions performed
+Bottom or Secondary Area: Lesson Feedback
+
+Shows:
+
+current teaching objective
+post-challenge lesson summary
+suggested next mission
+8. Challenge System Design
+
+Challenges are the main teaching engine. They must be data-driven and extensible.
+
+Each challenge should be defined as structured data rather than hardcoded UI logic wherever possible.
+
+8.1 Challenge Fields
+
+Each challenge definition should include fields such as:
+
+id
+title
+category
+difficulty
+summary
+full_description
+learning_goals
+recommended_agent_types
+required_skills
+optional_skills
+input_assets
+hints
+success_criteria
+completion_lesson
+unlock_requirements
+8.2 Challenge Categories
+
+Suggested categories:
+
+basic reasoning
+asking effective questions
+using a single skill
+reading files
+summarization
+code inspection
+debugging
+research
+planning
+multi-step problem solving
+8.3 Difficulty Tiers
+
+Suggested tiers:
+
+Tier 1: Ask and Observe
+
+Simple prompt-based tasks. Teaches the user how to ask clearly.
+
+Tier 2: Skill Introduction
+
+Tasks that require the use of one visible skill.
+
+Tier 3: Context and Inputs
+
+Tasks that require the user to provide files, code, or data.
+
+Tier 4: Multi-Step Workflows
+
+Tasks involving planning, execution, and validation.
+
+Tier 5: Real-World Agent Use
+
+Practical missions involving debugging, research, comparison, or code analysis.
+
+8.4 Success Validation
+
+Support multiple validation styles:
+
+exact answer match
+keyword match
+structured JSON response check
+rubric-based partial validation
+manual user confirmation
+agent-reviewed completion, if appropriate
+
+The design should support both deterministic validation and softer instructional validation.
+
+9. Skill Integration Design
+
+The project should assume that OpenClaw skills may be discoverable through a registry, file metadata, or runtime introspection.
+
+The system should normalize skill definitions into a common internal format.
+
+9.1 Internal Skill Metadata Model
+
+A normalized skill object should ideally contain:
+
+id
+name
+display_name
+description
+category
+parameters
+examples
+risk_level
+installed
+enabled
+
+Each parameter should include:
+
+name
+type
+required flag
+default value
+help text
+9.2 Skill UI Generation
+
+Based on normalized skill metadata, the app should be able to auto-render:
+
+a launch button for simple no-arg skills
+forms for skills with parameters
+helper text
+example invocations
+9.3 Skill Relevance Hints
+
+When a challenge is active, the UI should be able to highlight likely-useful skills. This can be based on:
+
+challenge metadata
+skill categories
+tutor rules
+recent user behavior
+
+Example:
+“This challenge may be easier if you use a file-reading skill.”
+
+10. Agent Abstraction Layer
+
+The UI should not directly expose raw agent internals in the first version.
+
+Instead, define a simple abstraction model for agent presets.
+
+10.1 Agent Preset Fields
+
+Each preset should include:
+
+id
+name
+avatar
+description
+personality_prompt
+teaching_style
+recommended_skills
+challenge_bias
+ui_theme_accent (optional)
+10.2 Initial Presets
+
+Suggested MVP presets:
+
+Tutor
+
+Friendly, explanatory, beginner-focused.
+
+Researcher
+
+Strong at gathering facts and synthesizing information.
+
+Mechanic
+
+Focused on debugging, code reading, and problem diagnosis.
+
+Planner
+
+Focused on decomposition, task plans, and strategies.
+
+These may all map to similar underlying models initially, differing mainly in prompts and teaching style.
+
+11. Tutor / Guidance System
+
+This is a key differentiator. The app should not merely relay agent responses. It should teach.
+
+11.1 Tutor Responsibilities
+
+The tutor layer should:
+
+suggest the next reasonable action
+point the user toward a relevant skill
+help interpret failures
+explain why a solution worked
+reinforce concepts learned
+11.2 Guidance Modes
+
+Support multiple display modes:
+
+Simple Mode
+
+Minimal details, beginner friendly.
+
+Explain Mode
+
+Show which skills/actions were used in plain language.
+
+Advanced Mode
+
+Show more raw detail, such as command structures, parameters, logs, or agent steps.
+
+This allows the app to serve as a bridge from novice to power user.
+
+12. Recommended Architecture
+
+Use a modular architecture with clear separation of concerns.
+
+12.1 Suggested Modules
+ui/
+
+UI components, panels, views, widgets
+
+agents/
+
+Agent presets, config adapters, personality definitions
+
+skills/
+
+Skill discovery, normalization, execution wrappers, UI metadata
+
+challenges/
+
+Challenge definitions, loading, validation, hint logic
+
+runtime/
+
+OpenClaw integration, session management, event streaming, tool execution
+
+tutor/
+
+Guidance rules, explanations, recommendation engine
+
+progress/
+
+User state, completed tasks, unlocks, learned concepts
+
+storage/
+
+Persistence for settings, progress, agent profiles, challenge state
+
+12.2 Architectural Priority
+
+Keep the UI layer separate from the OpenClaw integration layer so the app can be developed and tested without needing full agent execution working from day one.
+
+Use adapters and mock runtimes early.
+
+13. Suggested Technology Approach
+
+The exact stack can be chosen by the implementing agent, but preferred characteristics are:
+
+Python-friendly if aligning with OpenClaw ecosystem
+easy local desktop UI development
+clean support for dynamic forms and multi-panel layouts
+straightforward local persistence
+
+Possible paths:
+
+PySide6 / Qt for a true desktop app
+Electron or Tauri if web-tech desktop shell is preferred
+local web app with FastAPI backend plus browser UI
+
+For a first serious prototype, a local web UI or Qt UI are both valid. The project should prioritize fast iteration and clean modularity over trendy stack choices.
+
+14. MVP Definition
+
+The MVP should prove the core experience with the smallest realistic scope.
+
+14.1 MVP Features
+one working UI shell
+one selectable agent preset, or at most two
+chat interface
+challenge board with 8 to 12 handcrafted beginner challenges
+support for a small number of skill types
+basic skill introspection or mocked skill registry
+challenge validation
+progress tracking
+post-challenge lesson summaries
+14.2 MVP Skill Types
+
+At minimum, support examples such as:
+
+plain reasoning / ask agent
+read file
+summarize content
+search/research if available
+14.3 MVP Goal
+
+A complete beginner should be able to:
+
+select an agent
+open a challenge
+interact via chat
+use a visible skill button/form
+solve a challenge
+understand what they learned
+15. Milestone Plan
+Milestone 1: Skeleton App
+
+Build the base UI with placeholder content.
+
+Deliverables:
+
+application shell
+multi-panel layout
+agent dock
+challenge board panel
+chat panel
+static sample data
+Milestone 2: Challenge Engine
+
+Implement structured challenge loading and validation.
+
+Deliverables:
+
+challenge model
+challenge loader
+challenge view
+hint system
+completion detection
+lesson summary panel
+Milestone 3: Agent Interaction Layer
+
+Implement basic conversational agent interaction.
+
+Deliverables:
+
+message model
+chat history
+agent response flow
+mock runtime or real adapter
+per-agent preset behavior
+Milestone 4: Skill Registry + Dynamic Controls
+
+Implement normalized skill metadata and dynamic UI rendering.
+
+Deliverables:
+
+skill registry adapter
+internal skill schema
+dynamic form/button generation
+sample skill execution flow
+Milestone 5: Tutor Guidance System
+
+Add contextual teaching support.
+
+Deliverables:
+
+concept hints
+relevant skill suggestions
+post-failure guidance
+challenge lesson mapping
+Milestone 6: Persistence and Progression
+
+Track progress and unlocks.
+
+Deliverables:
+
+saved user profile
+completed challenges
+unlocked tiers
+learned concepts view
+Milestone 7: OpenClaw Integration Refinement
+
+Replace mocks with stronger real integration where available.
+
+Deliverables:
+
+session bridge
+installed skill detection
+tool execution feedback
+clearer runtime logging
+16. Data Design Recommendations
+
+Use structured configuration files for:
+
+agent presets
+challenge definitions
+skill metadata mappings
+UI settings
+tutorial lesson text
+
+JSON or YAML are acceptable.
+
+Challenge definitions should be content-driven so new challenge packs can be added later without changing core code.
+
+17. UX Details to Emphasize
+17.1 Blank-Page Relief
+
+Never leave the user with only a blank chat box and no suggested actions.
+
+Always provide one or more of:
+
+suggested prompt starters
+visible skill buttons
+challenge hints
+example commands
+17.2 Friendly Failure
+
+If an agent attempt fails, the UI should explain that this is part of the workflow, not a user mistake.
+
+17.3 Visible Affordances
+
+Skills should look usable and self-explanatory. Avoid hidden power.
+
+17.4 Reward Loop
+
+Completion should feel satisfying:
+
+challenge completed badge
+short lesson summary
+concept unlocked
+next recommendation
+18. Future Expansion Ideas
+
+These are not required for MVP but should influence architecture.
+
+18.1 Skill Installation UI
+
+Help users install new OpenClaw skills from within the app.
+
+18.2 Agent Builder Wizard
+
+A visual interface for creating custom agents without editing raw config files.
+
+18.3 Challenge Packs
+
+Installable challenge packs for different domains:
+
+coding
+research
+writing
+debugging
+automation
+18.4 Community Content
+
+User-created or shared challenge packs and agent presets.
+
+18.5 Replay / Transparency
+
+Show step-by-step logs of agent actions as a learning tool.
+
+18.6 Sandbox Mode
+
+A freeform mode outside the challenge system.
+
+19. Non-Goals for Initial Version
+
+To keep scope sane, do not prioritize these in v1:
+
+full raw OpenClaw configuration editing
+every skill type supported immediately
+multi-user networking
+cloud sync
+marketplace features
+advanced plugin ecosystem
+autonomous background agent swarms
+production-grade polish before core learning loop works
+20. Success Criteria
+
+The project will be considered successful if an early user can do the following without external documentation:
+
+launch the app
+choose an agent
+understand what the active challenge is asking
+use chat and at least one visible skill control
+complete a beginner challenge
+explain in their own words what they learned
+feel less intimidated by OpenClaw afterward
+21. Implementation Guidance for the Agent
+
+When fleshing out this project:
+
+prioritize the user learning flow over raw backend completeness
+keep the architecture modular and data-driven
+use mocks or stubs where necessary to validate UX before full integration
+make the challenge engine and skill metadata system extensible
+build a small but complete vertical slice rather than a giant unfinished shell
+
+The first objective is not “support all OpenClaw features.”
+The first objective is:
+
+Create a believable, useful beginner training experience that demonstrates how agents, skills, and guided challenges can work together in one coherent interface.
+
+
