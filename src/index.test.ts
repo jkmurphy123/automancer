@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { getSampleAppState, renderAppShellHtml } from './index.js';
 
 describe('getSampleAppState', () => {
-  it('provides milestone 4 skill registry config alongside challenge fixtures', () => {
+  it('provides milestone 5 guidance config alongside challenge fixtures', () => {
     const state = getSampleAppState();
 
     expect(state.agents.length).toBeGreaterThan(0);
@@ -17,6 +17,8 @@ describe('getSampleAppState', () => {
       displayName: expect.any(String),
       parameters: expect.any(Array),
     });
+    expect(state.tutorGuidance.byChallengeId[state.challengeCatalog.defaultChallengeId]).toBeDefined();
+    expect(state.lessonMap[state.challengeCatalog.defaultChallengeId]).toBeDefined();
   });
 });
 
@@ -31,6 +33,9 @@ describe('renderAppShellHtml', () => {
     expect(html).toContain('Agent preset');
     expect(html).toContain('Run Skill');
     expect(html).toContain('Skill Activity');
+    expect(html).toContain('Tutor Guidance');
+    expect(html).toContain('Concept hints');
+    expect(html).toContain('Suggested skills');
     expect(html).toContain('data-module="ui"');
     expect(html).toContain('data-module="agents"');
     expect(html).toContain('data-module="challenges"');

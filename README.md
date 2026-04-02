@@ -1,6 +1,6 @@
 # OpenClaw Tutor UI Playground
 
-Milestone 4 skill registry and dynamic controls layer for the Tutor UI project.
+Milestone 5 tutor guidance system layered on top of skill registry, challenge validation, and runtime chat flows.
 
 ## Quick start
 
@@ -32,9 +32,17 @@ Example:
 TUTOR_RUNTIME_MODE=mock npm run dev
 ```
 
-## Milestone 4 Scope
+## Milestone 5 Scope
 
-The app now supports a normalized skill metadata pipeline and dynamic skill controls layered on top of Milestone 3 chat/runtime behavior:
+The app now supports contextual tutor guidance layered on top of Milestone 4 skill and Milestone 3 runtime behavior:
+
+- Concept hints tied to each challenge definition (`concepts` metadata)
+- Relevant skill suggestions mapped from challenge requirements plus relevance rules
+- Post-failure guidance that explains next step and points back to deterministic hints
+- Challenge-to-lesson mapping surfaced directly in the challenge panel
+- End-to-end flow from challenge selection -> hint reveal -> failed submission guidance -> success lesson
+
+Milestone 4 functionality remains active:
 
 - Normalized skill schema with stable fields for id/name/display name/description/category/parameters/examples/risk/installed/enabled
 - Skill registry adapter that converts raw/sample skill definitions into the normalized schema
@@ -68,6 +76,7 @@ Key implementation paths:
 - `src/runtime/mock-adapter.ts`: deterministic mock runtime implementation
 - `src/runtime/messages.ts`: chat message model utilities
 - `src/skills/sample-data.ts`: normalized skill schema, registry adapter, and relevance rules
+- `src/tutor/guidance.ts`: challenge lesson map and tutor guidance catalog helpers
 - `src/ui/shell.ts`: challenge board rendering and browser-side interaction wiring
 
 ## Verification

@@ -31,6 +31,7 @@ export interface ChallengeDefinition {
   difficulty: DifficultyTier;
   summary: string;
   fullDescription: string;
+  concepts: string[];
   learningGoals: string[];
   recommendedAgentTypes: string[];
   requiredSkills: string[];

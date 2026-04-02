@@ -5,6 +5,7 @@ import type { ChallengeCatalog, ChallengeDefinition } from '../challenges/types.
 import type { ChatSessionConfig } from '../runtime/index.js';
 import { formatClockTime, type ChatMessage } from '../runtime/messages.js';
 import { resolveSkillRelevanceHint, type SkillMetadata, type SkillRailState } from '../skills/sample-data.js';
+import type { TutorGuidanceCatalog } from '../tutor/guidance.js';
 import { escapeHtml } from './escape.js';
 
 export interface AppShellState {
@@ -13,6 +14,8 @@ export interface AppShellState {
   challengeCatalog: ChallengeCatalog;
   chatSession: ChatSessionConfig;
   skillRail: SkillRailState;
+  tutorGuidance: TutorGuidanceCatalog;
+  lessonMap: Record<string, { whatYouLearned: string; nextMission: string }>;
 }
 
 const statusTone: Record<DockAgent['status'], string> = {
@@ -107,6 +110,20 @@ function renderChallengeBoard(catalog: ChallengeCatalog): string {
             <button class="button" type="button" data-hint-button>Reveal Next Hint</button>
             <span class="meta" data-hint-progress>0/${activeChallenge.hints.length} shown</span>
           </p>
+
+          <section class="guidance-panel">
+            <h4>Tutor Guidance</h4>
+            <p class="meta">Concept hints</p>
+            <ul class="criteria" data-guidance-concepts>
+              <li>Focus concept guidance will appear here.</li>
+            </ul>
+            <p class="meta">Suggested skills</p>
+            <ul class="criteria" data-guidance-skills>
+              <li>No skill suggestions available yet.</li>
+            </ul>
+            <p class="meta" data-guidance-lesson-map>Lesson mapping will appear after challenge selection.</p>
+            <p class="hint-output" data-guidance-failure>No failed attempts yet. Guidance will appear here if validation fails.</p>
+          </section>
 
           <h4>Submit Candidate Response</h4>
           <label class="sr-only" for="candidate-response">Candidate response</label>
@@ -518,6 +535,14 @@ function renderStyle(): string {
       color: var(--blocked);
     }
 
+    .guidance-panel {
+      margin-top: 0.75rem;
+      border: 1px solid rgba(62, 79, 106, 0.25);
+      border-radius: 10px;
+      padding: 0.6rem;
+      background: rgba(255, 255, 255, 0.82);
+    }
+
     .lesson {
       margin-top: 0.7rem;
       border: 1px solid rgba(15, 143, 111, 0.4);
@@ -621,10 +646,16 @@ function serializeForInlineScript(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
-function renderChallengeRuntimeScript(catalog: ChallengeCatalog): string {
+function renderChallengeRuntimeScript(
+  catalog: ChallengeCatalog,
+  tutorGuidance: TutorGuidanceCatalog,
+  lessonMap: Record<string, { whatYouLearned: string; nextMission: string }>,
+): string {
   return `
     (() => {
       const catalog = ${serializeForInlineScript(catalog)};
+      const guidanceByChallengeId = ${serializeForInlineScript(tutorGuidance.byChallengeId)};
+      const lessonMap = ${serializeForInlineScript(lessonMap)};
       const byId = catalog.byId;
       const state = {
         activeId: catalog.defaultChallengeId,
@@ -651,6 +682,10 @@ function renderChallengeRuntimeScript(catalog: ChallengeCatalog): string {
         lessonPanel: document.querySelector('[data-lesson-panel]'),
         lessonSummary: document.querySelector('[data-lesson-summary]'),
         nextMission: document.querySelector('[data-next-mission]'),
+        guidanceConcepts: document.querySelector('[data-guidance-concepts]'),
+        guidanceSkills: document.querySelector('[data-guidance-skills]'),
+        guidanceLessonMap: document.querySelector('[data-guidance-lesson-map]'),
+        guidanceFailure: document.querySelector('[data-guidance-failure]'),
       };
 
       const normalizeText = (value) => value.trim().toLowerCase().replace(/\\s+/g, ' ');
@@ -762,6 +797,45 @@ function renderChallengeRuntimeScript(catalog: ChallengeCatalog): string {
         });
       };
 
+      const renderList = (target, values, emptyLabel) => {
+        target.innerHTML = '';
+
+        if (!Array.isArray(values) || values.length === 0) {
+          const item = document.createElement('li');
+          item.textContent = emptyLabel;
+          target.appendChild(item);
+          return;
+        }
+
+        values.forEach((value) => {
+          const item = document.createElement('li');
+          item.textContent = value;
+          target.appendChild(item);
+        });
+      };
+
+      const buildPostFailureGuidance = (challenge, validationFeedback) => {
+        const firstHint = challenge.hints[0] ?? 'Review the challenge details and try one smaller step.';
+        return 'Attempt did not pass yet. ' + validationFeedback + ' Next step: ' + firstHint;
+      };
+
+      const renderGuidance = (challenge) => {
+        const guidance = guidanceByChallengeId[challenge.id];
+        const lesson = lessonMap[challenge.id];
+        const conceptHints = guidance?.conceptHints ?? [];
+        const skillHints = (guidance?.suggestedSkills ?? []).map(
+          (suggestion) => suggestion.displayName + ': ' + suggestion.reason,
+        );
+
+        renderList(elements.guidanceConcepts, conceptHints, 'No concept hints available.');
+        renderList(elements.guidanceSkills, skillHints, 'No skill suggestions available.');
+        if (lesson) {
+          elements.guidanceLessonMap.textContent = challenge.id + ' maps to lesson: ' + lesson.whatYouLearned;
+        } else {
+          elements.guidanceLessonMap.textContent = challenge.id + ' has no lesson mapping.';
+        }
+      };
+
       const renderListState = () => {
         elements.challengeList
           .querySelectorAll('button[data-challenge-id]')
@@ -786,8 +860,10 @@ function renderChallengeRuntimeScript(catalog: ChallengeCatalog): string {
         elements.submissionInput.value = '';
         elements.feedback.textContent = 'Awaiting submission.';
         elements.feedback.classList.remove('feedback-success', 'feedback-failed');
+        elements.guidanceFailure.textContent = 'No failed attempts yet. Guidance will appear here if validation fails.';
         state.shownHints = 0;
         renderCriteria(challenge.successCriteria);
+        renderGuidance(challenge);
         setLessonVisible(false);
         renderListState();
         emitChallengeChanged();
@@ -832,11 +908,13 @@ function renderChallengeRuntimeScript(catalog: ChallengeCatalog): string {
         elements.feedback.classList.toggle('feedback-failed', !result.passed);
 
         if (!result.passed) {
+          elements.guidanceFailure.textContent = buildPostFailureGuidance(challenge, result.feedback);
           setLessonVisible(false);
           return;
         }
 
         state.completed[challenge.id] = true;
+        elements.guidanceFailure.textContent = 'Latest submission passed validation.';
         elements.lessonSummary.textContent = challenge.completionLesson.whatYouLearned;
         elements.nextMission.textContent = challenge.completionLesson.nextMission;
         setLessonVisible(true);
@@ -1286,7 +1364,7 @@ export function renderAppShell(state: AppShellState): string {
       ${board}
       ${chat}
     </main>
-    <script>${renderChallengeRuntimeScript(state.challengeCatalog)}</script>
+    <script>${renderChallengeRuntimeScript(state.challengeCatalog, state.tutorGuidance, state.lessonMap)}</script>
     <script>${renderAgentInteractionScript(state.chatSession, state.agentPresets, state.skillRail)}</script>
   </body>
 </html>`;

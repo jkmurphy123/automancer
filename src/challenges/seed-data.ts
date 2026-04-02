@@ -9,6 +9,7 @@ export const seededChallenges: ChallengeDefinition[] = [
     summary: 'Draft a concise request that includes goal, audience, and constraints.',
     fullDescription:
       'Write one message to the tutor agent asking for help on a lesson. Include the user goal, who the answer is for, and at least one concrete constraint.',
+    concepts: ['prompt framing', 'audience targeting', 'constraints'],
     learningGoals: ['Use explicit goals', 'Constrain scope', 'Improve prompt clarity'],
     recommendedAgentTypes: ['coach'],
     requiredSkills: [],
@@ -43,6 +44,7 @@ export const seededChallenges: ChallengeDefinition[] = [
     summary: 'Read the Agent Dock and report who is blocked.',
     fullDescription:
       'Inspect the Agent Dock and answer with exactly one sentence that identifies the blocked agent and their specialty.',
+    concepts: ['state observation', 'precision reporting', 'ui grounding'],
     learningGoals: ['Read UI state accurately', 'Return precise observations'],
     recommendedAgentTypes: ['assistant'],
     requiredSkills: [],
@@ -72,6 +74,7 @@ export const seededChallenges: ChallengeDefinition[] = [
     summary: 'Summarize conversation state with blocker, next step, and owner.',
     fullDescription:
       'Write a short summary of the Chat + Skills conversation that includes one blocker/risk, one next step, and one owner.',
+    concepts: ['action summary', 'risk communication', 'ownership clarity'],
     learningGoals: ['Produce concise summaries', 'Extract action-oriented signal'],
     recommendedAgentTypes: ['coach'],
     requiredSkills: [],
@@ -101,6 +104,7 @@ export const seededChallenges: ChallengeDefinition[] = [
     summary: 'Define one concrete action with command and expected output.',
     fullDescription:
       'Provide one execution step for this project. Include the command to run and what result you expect to verify.',
+    concepts: ['single-step planning', 'verification criteria', 'execution clarity'],
     learningGoals: ['Create executable next steps', 'Make validation explicit'],
     recommendedAgentTypes: ['builder'],
     requiredSkills: [],
@@ -130,6 +134,7 @@ export const seededChallenges: ChallengeDefinition[] = [
     summary: 'Identify where challenge content is stored and how to run checks.',
     fullDescription:
       'Assume you used a file-reading skill to inspect docs. Report the challenge content location and the all-in-one verification command.',
+    concepts: ['repo orientation', 'file navigation', 'quality gate usage'],
     learningGoals: ['Use skill output in answers', 'Locate project structure quickly'],
     recommendedAgentTypes: ['builder'],
     requiredSkills: ['Repo Search'],
@@ -159,6 +164,7 @@ export const seededChallenges: ChallengeDefinition[] = [
     summary: 'Respond in JSON with tool, query, and reason fields.',
     fullDescription:
       'Return a JSON object that asks the assistant to run a repo search for challenge validation logic. Include keys tool, query, and reason.',
+    concepts: ['structured requests', 'tool intent', 'machine-parseable outputs'],
     learningGoals: ['Use structured outputs', 'Make tool intent auditable'],
     recommendedAgentTypes: ['scout'],
     requiredSkills: ['Repo Search'],
@@ -191,6 +197,7 @@ export const seededChallenges: ChallengeDefinition[] = [
     summary: 'Identify which file renders the challenge board and list two artifacts it renders.',
     fullDescription:
       'Answer with one sentence that names the source file for challenge board rendering and at least two UI artifacts it outputs.',
+    concepts: ['render ownership', 'artifact mapping', 'code tracing'],
     learningGoals: ['Trace rendering ownership', 'Read code for concrete outputs'],
     recommendedAgentTypes: ['builder'],
     requiredSkills: ['Repo Search'],
@@ -220,6 +227,7 @@ export const seededChallenges: ChallengeDefinition[] = [
     summary: 'Produce JSON with issue, command, and fix for a failing check.',
     fullDescription:
       'Return JSON describing a hypothetical failing quality gate. Include keys issue, command, and fix. Keep each value concise.',
+    concepts: ['debug triage', 'reproducibility', 'fix articulation'],
     learningGoals: ['Report failures reproducibly', 'Separate symptom from remediation'],
     recommendedAgentTypes: ['verifier'],
     requiredSkills: ['Repo Search'],

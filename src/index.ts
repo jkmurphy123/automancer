@@ -6,12 +6,15 @@ import { createChallengeCatalog } from './challenges/loader.js';
 import type { ChallengeCatalog } from './challenges/types.js';
 import { createChatSessionConfig, resolveRuntimeMode } from './runtime/index.js';
 import { sampleSkillRail } from './skills/sample-data.js';
+import { buildChallengeLessonMap, buildTutorGuidanceCatalog } from './tutor/guidance.js';
 import { renderAppShell, type AppShellState } from './ui/shell.js';
 
 export function getSampleAppState(): AppShellState {
   const challengeCatalog: ChallengeCatalog = createChallengeCatalog();
   const runtimeMode = resolveRuntimeMode(process.env.TUTOR_RUNTIME_MODE);
   const chatSession = createChatSessionConfig(runtimeMode);
+  const tutorGuidance = buildTutorGuidanceCatalog(challengeCatalog, sampleSkillRail);
+  const lessonMap = buildChallengeLessonMap(challengeCatalog);
 
   return {
     agents: sampleAgents,
@@ -19,6 +22,8 @@ export function getSampleAppState(): AppShellState {
     challengeCatalog,
     chatSession,
     skillRail: sampleSkillRail,
+    tutorGuidance,
+    lessonMap,
   };
 }
 
