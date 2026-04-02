@@ -1,13 +1,18 @@
+import type { AgentPreset } from '../agents/presets.js';
 import type { DockAgent } from '../agents/sample-data.js';
 import { difficultyLabel } from '../challenges/loader.js';
 import type { ChallengeCatalog, ChallengeDefinition } from '../challenges/types.js';
-import type { ChatAndSkills } from '../skills/sample-data.js';
+import type { ChatSessionConfig } from '../runtime/index.js';
+import { formatClockTime, type ChatMessage } from '../runtime/messages.js';
+import type { SkillRailState } from '../skills/sample-data.js';
 import { escapeHtml } from './escape.js';
 
 export interface AppShellState {
   agents: DockAgent[];
+  agentPresets: AgentPreset[];
   challengeCatalog: ChallengeCatalog;
-  chatAndSkills: ChatAndSkills;
+  chatSession: ChatSessionConfig;
+  skillRail: SkillRailState;
 }
 
 const statusTone: Record<DockAgent['status'], string> = {
@@ -124,22 +129,22 @@ function renderChallengeBoard(catalog: ChallengeCatalog): string {
   `;
 }
 
-function renderChatAndSkills(chatAndSkills: ChatAndSkills): string {
-  const messages = chatAndSkills.messages
+function renderChatAndSkills(chatSession: ChatSessionConfig, presets: AgentPreset[], skillRail: SkillRailState): string {
+  const messages = chatSession.initialMessages
     .map(
       (message) => `
       <li class="card message">
         <p class="row-between">
-          <span class="badge tone-neutral">${escapeHtml(message.author)}</span>
-          <span class="meta">${escapeHtml(message.at)}</span>
+          <span class="badge tone-neutral">${escapeHtml(message.role)}</span>
+          <span class="meta">${escapeHtml(formatClockTime(message.createdAt))}</span>
         </p>
-        <p>${escapeHtml(message.body)}</p>
+        <p>${escapeHtml(message.text)}</p>
       </li>
     `,
     )
     .join('');
 
-  const controls = chatAndSkills.controls
+  const controls = skillRail.controls
     .map(
       (control) => `
       <li class="card control-row">
@@ -153,14 +158,36 @@ function renderChatAndSkills(chatAndSkills: ChatAndSkills): string {
     )
     .join('');
 
+  const options = presets
+    .map(
+      (preset) => `
+        <option value="${escapeHtml(preset.id)}" ${preset.id === chatSession.defaultPresetId ? 'selected' : ''}>
+          ${escapeHtml(preset.name)} - ${escapeHtml(preset.teachingStyle)}
+        </option>
+      `,
+    )
+    .join('');
+
   return `
     <section class="panel panel-chat" data-module="skills">
       <header class="panel-header">
         <h2>Chat + Skills</h2>
-        <p>${escapeHtml(chatAndSkills.threadTitle)}</p>
+        <p>${escapeHtml(skillRail.threadTitle)}</p>
       </header>
+      <div class="chat-controls">
+        <label class="meta" for="agent-preset-select">Agent preset</label>
+        <select id="agent-preset-select" class="input-control" data-agent-preset-select>
+          ${options}
+        </select>
+      </div>
       <h3>Conversation</h3>
-      <ul class="stack">${messages}</ul>
+      <ul class="stack" data-chat-thread>${messages}</ul>
+      <label class="sr-only" for="chat-input">Chat input</label>
+      <textarea id="chat-input" class="submission-box chat-input" data-chat-input rows="4" placeholder="Ask the active agent for your next step..."></textarea>
+      <p class="controls-row">
+        <button class="button" type="button" data-chat-send>Send Message</button>
+      </p>
+      <p class="feedback" data-chat-runtime-status>Runtime idle.</p>
       <h3>Skill Controls</h3>
       <ul class="stack">${controls}</ul>
     </section>
@@ -382,6 +409,26 @@ function renderStyle(): string {
       min-height: 7.5rem;
     }
 
+    .chat-controls {
+      display: grid;
+      gap: 0.35rem;
+      margin-top: 0.55rem;
+    }
+
+    .input-control {
+      width: 100%;
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 0.45rem 0.55rem;
+      background: rgba(255, 255, 255, 0.85);
+      font: inherit;
+      color: var(--text);
+    }
+
+    .chat-input {
+      min-height: 5.2rem;
+    }
+
     .feedback {
       margin: 0.7rem 0 0;
       font-size: 0.88rem;
@@ -422,6 +469,18 @@ function renderStyle(): string {
     .message p {
       margin-top: 0.45rem;
       margin-bottom: 0;
+    }
+
+    .message-role-user {
+      color: #2157a5;
+    }
+
+    .message-role-agent {
+      color: var(--ready);
+    }
+
+    .message-role-system {
+      color: var(--neutral);
     }
 
     .control-row {
@@ -665,10 +724,214 @@ function renderChallengeRuntimeScript(catalog: ChallengeCatalog): string {
   `;
 }
 
+function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: AgentPreset[]): string {
+  return `
+    (() => {
+      const runtimeMode = ${serializeForInlineScript(chatSession.runtimeMode)};
+      const defaultPresetId = ${serializeForInlineScript(chatSession.defaultPresetId)};
+      const presets = ${serializeForInlineScript(presets)};
+      const state = {
+        selectedPresetId: defaultPresetId,
+        messages: ${serializeForInlineScript(chatSession.initialMessages as ChatMessage[])},
+        pending: false,
+      };
+
+      const elements = {
+        thread: document.querySelector('[data-chat-thread]'),
+        presetSelect: document.querySelector('[data-agent-preset-select]'),
+        chatInput: document.querySelector('[data-chat-input]'),
+        sendButton: document.querySelector('[data-chat-send]'),
+        status: document.querySelector('[data-chat-runtime-status]'),
+      };
+
+      const formatTime = (isoValue) => {
+        const date = new Date(isoValue);
+
+        if (Number.isNaN(date.getTime())) {
+          return '--:--';
+        }
+
+        const hh = String(date.getHours()).padStart(2, '0');
+        const mm = String(date.getMinutes()).padStart(2, '0');
+
+        return hh + ':' + mm;
+      };
+
+      const nextId = () => {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+          return crypto.randomUUID();
+        }
+
+        return 'msg-' + String(Date.now()) + '-' + String(Math.random()).slice(2);
+      };
+
+      const createMessage = (payload) => ({
+        id: nextId(),
+        createdAt: new Date().toISOString(),
+        ...payload,
+      });
+
+      const setPending = (pending, label) => {
+        state.pending = pending;
+        elements.sendButton.disabled = pending;
+        elements.presetSelect.disabled = pending;
+        elements.status.textContent = label;
+        elements.status.classList.toggle('feedback-failed', !pending && label.toLowerCase().includes('failed'));
+      };
+
+      const getPreset = () => presets.find((preset) => preset.id === state.selectedPresetId) ?? presets[0];
+
+      const renderMessages = () => {
+        elements.thread.innerHTML = '';
+
+        state.messages.forEach((message) => {
+          const item = document.createElement('li');
+          item.className = 'card message';
+
+          const header = document.createElement('p');
+          header.className = 'row-between';
+
+          const role = document.createElement('span');
+          role.className = 'badge tone-neutral message-role-' + message.role;
+          role.textContent = message.role;
+
+          const clock = document.createElement('span');
+          clock.className = 'meta';
+          clock.textContent = formatTime(message.createdAt);
+
+          header.appendChild(role);
+          header.appendChild(clock);
+
+          const text = document.createElement('p');
+          text.textContent = message.text;
+
+          item.appendChild(header);
+          item.appendChild(text);
+          elements.thread.appendChild(item);
+        });
+      };
+
+      const mockRuntimeSend = async (preset, userMessage) => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 220);
+        });
+
+        const normalized = userMessage.text.trim().toLowerCase();
+
+        if (normalized.includes('__mock_error__')) {
+          throw new Error('Simulated mock runtime failure triggered by __mock_error__.');
+        }
+
+        if (preset.id === 'tutor') {
+          return {
+            text:
+              'Start with one small step: ' +
+              userMessage.text +
+              '. Then verify against the challenge success criteria before moving on.',
+            systemNote: 'Tutor mode suggested a step-by-step coaching response.',
+          };
+        }
+
+        if (preset.id === 'researcher') {
+          return {
+            text:
+              'Evidence-first summary: identify two concrete facts about "' +
+              userMessage.text +
+              '" and note one unknown to verify.',
+            systemNote: 'Researcher mode prioritized factual grounding.',
+          };
+        }
+
+        return {
+          text:
+            'Debug pass: reproduce the issue described in "' +
+            userMessage.text +
+            '", capture one root cause, then apply the smallest safe fix.',
+          systemNote: 'Mechanic mode generated a diagnosis-first response.',
+        };
+      };
+
+      const sendMessage = async () => {
+        if (state.pending) {
+          return;
+        }
+
+        const value = elements.chatInput.value.trim();
+        if (value.length === 0) {
+          setPending(false, 'Message not sent. Enter text first.');
+          return;
+        }
+
+        const preset = getPreset();
+        const userMessage = createMessage({
+          role: 'user',
+          text: value,
+          agentPresetId: preset.id,
+        });
+        state.messages.push(userMessage);
+        elements.chatInput.value = '';
+        renderMessages();
+        setPending(true, runtimeMode.toUpperCase() + ' runtime processing...');
+
+        try {
+          const runtimeResponse = await mockRuntimeSend(preset, userMessage);
+          state.messages.push(
+            createMessage({
+              role: 'agent',
+              text: runtimeResponse.text,
+              agentPresetId: preset.id,
+            }),
+          );
+
+          if (runtimeResponse.systemNote) {
+            state.messages.push(
+              createMessage({
+                role: 'system',
+                text: runtimeResponse.systemNote,
+              }),
+            );
+          }
+
+          renderMessages();
+          setPending(false, 'Response received from ' + preset.name + ' via ' + runtimeMode.toUpperCase() + ' runtime.');
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown runtime failure.';
+          state.messages.push(
+            createMessage({
+              role: 'system',
+              text: 'Runtime failed: ' + message,
+            }),
+          );
+          renderMessages();
+          setPending(false, 'Runtime request failed. See system message for details.');
+        }
+      };
+
+      elements.presetSelect.addEventListener('change', (event) => {
+        const selectedId = event.target.value;
+        if (presets.some((preset) => preset.id === selectedId)) {
+          state.selectedPresetId = selectedId;
+        }
+      });
+
+      elements.sendButton.addEventListener('click', sendMessage);
+      elements.chatInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          void sendMessage();
+        }
+      });
+
+      renderMessages();
+      setPending(false, 'Runtime idle.');
+    })();
+  `;
+}
+
 export function renderAppShell(state: AppShellState): string {
   const dock = renderAgentDock(state.agents);
   const board = renderChallengeBoard(state.challengeCatalog);
-  const chat = renderChatAndSkills(state.chatAndSkills);
+  const chat = renderChatAndSkills(state.chatSession, state.agentPresets, state.skillRail);
 
   return `<!doctype html>
 <html lang="en">
@@ -685,6 +948,7 @@ export function renderAppShell(state: AppShellState): string {
       ${chat}
     </main>
     <script>${renderChallengeRuntimeScript(state.challengeCatalog)}</script>
+    <script>${renderAgentInteractionScript(state.chatSession, state.agentPresets)}</script>
   </body>
 </html>`;
 }

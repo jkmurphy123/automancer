@@ -1,18 +1,24 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
+import { agentPresets } from './agents/presets.js';
 import { sampleAgents } from './agents/sample-data.js';
 import { createChallengeCatalog } from './challenges/loader.js';
 import type { ChallengeCatalog } from './challenges/types.js';
-import { sampleChatAndSkills } from './skills/sample-data.js';
+import { createChatSessionConfig, resolveRuntimeMode } from './runtime/index.js';
+import { sampleSkillRail } from './skills/sample-data.js';
 import { renderAppShell, type AppShellState } from './ui/shell.js';
 
 export function getSampleAppState(): AppShellState {
   const challengeCatalog: ChallengeCatalog = createChallengeCatalog();
+  const runtimeMode = resolveRuntimeMode(process.env.TUTOR_RUNTIME_MODE);
+  const chatSession = createChatSessionConfig(runtimeMode);
 
   return {
     agents: sampleAgents,
+    agentPresets,
     challengeCatalog,
-    chatAndSkills: sampleChatAndSkills,
+    chatSession,
+    skillRail: sampleSkillRail,
   };
 }
 
