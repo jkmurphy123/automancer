@@ -42,5 +42,8 @@ describe('renderAppShellHtml', () => {
     expect(html).toContain('data-module="skills"');
     expect(html).toContain('Reveal Next Hint');
     expect(html).toContain('Check Completion');
+    expect(html).toContain('Profile + Progress');
+    expect(html).toContain('Learned Concepts');
+    expect(html).toContain('openclawTutorProfile.v1');
   });
 });

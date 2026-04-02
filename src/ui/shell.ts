@@ -6,6 +6,12 @@ import type { ChatSessionConfig } from '../runtime/index.js';
 import { formatClockTime, type ChatMessage } from '../runtime/messages.js';
 import { resolveSkillRelevanceHint, type SkillMetadata, type SkillRailState } from '../skills/sample-data.js';
 import type { TutorGuidanceCatalog } from '../tutor/guidance.js';
+import {
+  buildCompletedIdSet,
+  challengeUnlockBlockedReason,
+  computeUnlockedTier,
+  isChallengeUnlocked,
+} from '../progress/progression.js';
 import { escapeHtml } from './escape.js';
 
 export interface AppShellState {
@@ -51,15 +57,25 @@ function renderAgentDock(agents: DockAgent[]): string {
   `;
 }
 
-function renderChallengePicker(challenge: ChallengeDefinition, isActive: boolean): string {
-  const activeClass = isActive ? 'is-active' : '';
+function renderChallengePicker(
+  challenge: ChallengeDefinition,
+  isActive: boolean,
+  unlockedTier: number,
+  completedIds: Set<string>,
+): string {
+  const isUnlocked = isChallengeUnlocked(challenge, unlockedTier, completedIds);
+  const activeClass = isActive && isUnlocked ? 'is-active' : '';
+  const lockedClass = isUnlocked ? '' : 'is-locked';
+  const disabledAttribute = isUnlocked ? '' : 'disabled';
+  const lockLabel = challengeUnlockBlockedReason(challenge, unlockedTier, completedIds) ?? 'Unlocked';
 
   return `
     <li>
-      <button class="challenge-picker ${activeClass}" type="button" data-challenge-id="${escapeHtml(challenge.id)}">
+      <button class="challenge-picker ${activeClass} ${lockedClass}" type="button" data-challenge-id="${escapeHtml(challenge.id)}" ${disabledAttribute}>
         <span class="badge tone-neutral">${escapeHtml(difficultyLabel(challenge.difficulty))}</span>
         <strong>${escapeHtml(challenge.title)}</strong>
         <span class="muted">${escapeHtml(challenge.category)}</span>
+        <span class="meta challenge-lock" data-lock-hint>${escapeHtml(lockLabel)}</span>
       </button>
     </li>
   `;
@@ -70,8 +86,15 @@ function renderChallengeBoard(catalog: ChallengeCatalog): string {
   if (activeChallenge === undefined) {
     throw new Error(`Challenge ${catalog.defaultChallengeId} was not found in catalog.`);
   }
+  const initialProgress = {
+    completedById: {},
+    activeChallengeId: catalog.defaultChallengeId,
+    profileName: 'Learner',
+  };
+  const completedIds = buildCompletedIdSet(initialProgress);
+  const unlockedTier = computeUnlockedTier(catalog, completedIds);
   const challengeOptions = catalog.challenges
-    .map((challenge) => renderChallengePicker(challenge, challenge.id === activeChallenge.id))
+    .map((challenge) => renderChallengePicker(challenge, challenge.id === activeChallenge.id, unlockedTier, completedIds))
     .join('');
 
   const criteria = activeChallenge.successCriteria
@@ -139,6 +162,27 @@ function renderChallengeBoard(catalog: ChallengeCatalog): string {
             <p data-lesson-summary></p>
             <h4>Suggested next mission</h4>
             <p data-next-mission></p>
+          </section>
+
+          <section class="guidance-panel">
+            <h4>Profile + Progress</h4>
+            <label class="skill-field">
+              <span class="meta">Display name</span>
+              <input class="input-control" type="text" data-profile-name maxlength="60" placeholder="Learner" />
+            </label>
+            <p class="controls-row">
+              <button class="button button-secondary" type="button" data-profile-save>Save Profile</button>
+              <span class="meta" data-profile-status>Profile not saved yet.</span>
+            </p>
+            <ul class="criteria">
+              <li data-progress-completed>Completed: 0/${catalog.challenges.length}</li>
+              <li data-progress-tier>Unlocked tier: TIER 1</li>
+              <li data-progress-concepts-count>Learned concepts: 0</li>
+            </ul>
+            <h4>Learned Concepts</h4>
+            <ul class="criteria" data-learned-concepts>
+              <li>Complete challenges to unlock concept summaries.</li>
+            </ul>
           </section>
         </article>
       </div>
@@ -446,9 +490,19 @@ function renderStyle(): string {
       background: #ecfaf5;
     }
 
+    .challenge-picker.is-locked {
+      opacity: 0.72;
+      background: rgba(255, 255, 255, 0.65);
+      cursor: not-allowed;
+    }
+
     .challenge-title {
       margin-top: 0.4rem;
       font-size: 1.05rem;
+    }
+
+    .challenge-lock {
+      margin-top: 0.2rem;
     }
 
     .criteria {
@@ -657,10 +711,13 @@ function renderChallengeRuntimeScript(
       const guidanceByChallengeId = ${serializeForInlineScript(tutorGuidance.byChallengeId)};
       const lessonMap = ${serializeForInlineScript(lessonMap)};
       const byId = catalog.byId;
+      const profileStorageKey = 'openclawTutorProfile.v1';
       const state = {
         activeId: catalog.defaultChallengeId,
         shownHints: 0,
-        completed: {},
+        completedById: {},
+        unlockedTier: 1,
+        profileName: 'Learner',
       };
 
       const elements = {
@@ -686,9 +743,169 @@ function renderChallengeRuntimeScript(
         guidanceSkills: document.querySelector('[data-guidance-skills]'),
         guidanceLessonMap: document.querySelector('[data-guidance-lesson-map]'),
         guidanceFailure: document.querySelector('[data-guidance-failure]'),
+        profileName: document.querySelector('[data-profile-name]'),
+        profileSave: document.querySelector('[data-profile-save]'),
+        profileStatus: document.querySelector('[data-profile-status]'),
+        progressCompleted: document.querySelector('[data-progress-completed]'),
+        progressTier: document.querySelector('[data-progress-tier]'),
+        progressConceptsCount: document.querySelector('[data-progress-concepts-count]'),
+        learnedConcepts: document.querySelector('[data-learned-concepts]'),
       };
 
       const normalizeText = (value) => value.trim().toLowerCase().replace(/\\s+/g, ' ');
+      const challengeCount = catalog.challenges.length;
+
+      const toTierNumber = (difficulty) => {
+        const parsed = Number(String(difficulty).replace('tier_', ''));
+        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 5) {
+          return 1;
+        }
+        return parsed;
+      };
+
+      const hasChallenge = (challengeId) => Object.prototype.hasOwnProperty.call(byId, challengeId);
+
+      const completedIds = () => new Set(Object.keys(state.completedById));
+
+      const computeUnlockedTier = () => {
+        let unlockedTier = 1;
+
+        for (let targetTier = 2; targetTier <= 5; targetTier += 1) {
+          const previousTier = targetTier - 1;
+          const previousTierChallenges = catalog.challenges.filter(
+            (challenge) => toTierNumber(challenge.difficulty) === previousTier,
+          );
+
+          if (previousTierChallenges.length === 0) {
+            break;
+          }
+
+          const previousTierCleared = previousTierChallenges.every((challenge) =>
+            Object.prototype.hasOwnProperty.call(state.completedById, challenge.id),
+          );
+
+          if (!previousTierCleared) {
+            break;
+          }
+
+          unlockedTier = targetTier;
+        }
+
+        return unlockedTier;
+      };
+
+      const blockedReason = (challenge) => {
+        const challengeTier = toTierNumber(challenge.difficulty);
+        if (challengeTier > state.unlockedTier) {
+          return 'Locked until Tier ' + String(challengeTier - 1) + ' is complete.';
+        }
+
+        const unmetRequirement = challenge.unlockRequirements.find(
+          (requiredId) => !Object.prototype.hasOwnProperty.call(state.completedById, requiredId),
+        );
+        if (unmetRequirement) {
+          return 'Locked until prerequisite ' + unmetRequirement + ' is complete.';
+        }
+
+        return null;
+      };
+
+      const isUnlocked = (challenge) => blockedReason(challenge) === null;
+
+      const findFirstUnlockedChallengeId = () => {
+        const firstUnlocked = catalog.challenges.find((challenge) => isUnlocked(challenge));
+        return firstUnlocked ? firstUnlocked.id : catalog.defaultChallengeId;
+      };
+
+      const ensureActiveChallengeUnlocked = () => {
+        const activeChallenge = byId[state.activeId];
+        if (activeChallenge && isUnlocked(activeChallenge)) {
+          return;
+        }
+        state.activeId = findFirstUnlockedChallengeId();
+      };
+
+      const collectLearnedConcepts = () => {
+        const concepts = [];
+        const seen = new Set();
+
+        catalog.challenges.forEach((challenge) => {
+          if (!Object.prototype.hasOwnProperty.call(state.completedById, challenge.id)) {
+            return;
+          }
+
+          challenge.concepts.forEach((concept) => {
+            const normalized = String(concept).trim();
+            if (normalized.length === 0 || seen.has(normalized)) {
+              return;
+            }
+            seen.add(normalized);
+            concepts.push(normalized);
+          });
+        });
+
+        return concepts;
+      };
+
+      const persistProfile = () => {
+        if (typeof window === 'undefined' || !window.localStorage) {
+          return;
+        }
+
+        try {
+          window.localStorage.setItem(
+            profileStorageKey,
+            JSON.stringify({
+              profileName: state.profileName,
+              activeChallengeId: state.activeId,
+              completedById: state.completedById,
+              savedAt: new Date().toISOString(),
+            }),
+          );
+        } catch {
+          // Ignore localStorage write failures (e.g., private mode).
+        }
+      };
+
+      const loadProfile = () => {
+        if (typeof window === 'undefined' || !window.localStorage) {
+          return;
+        }
+
+        try {
+          const raw = window.localStorage.getItem(profileStorageKey);
+          if (!raw) {
+            return;
+          }
+          const parsed = JSON.parse(raw);
+          const profileName = typeof parsed.profileName === 'string' ? parsed.profileName.trim() : '';
+          state.profileName = profileName.length > 0 ? profileName.slice(0, 60) : 'Learner';
+
+          if (typeof parsed.completedById === 'object' && parsed.completedById !== null && !Array.isArray(parsed.completedById)) {
+            const parsedCompleted = {};
+            Object.entries(parsed.completedById).forEach(([challengeId, completedAt]) => {
+              if (!hasChallenge(challengeId)) {
+                return;
+              }
+              if (typeof completedAt === 'string' && completedAt.trim().length > 0) {
+                parsedCompleted[challengeId] = completedAt;
+              }
+            });
+            state.completedById = parsedCompleted;
+          }
+
+          if (typeof parsed.activeChallengeId === 'string' && hasChallenge(parsed.activeChallengeId)) {
+            state.activeId = parsed.activeChallengeId;
+          }
+        } catch {
+          // Ignore corrupt local storage payloads.
+        }
+      };
+
+      const syncProgressState = () => {
+        state.unlockedTier = computeUnlockedTier();
+        ensureActiveChallengeUnlocked();
+      };
 
       const evaluateKeyword = (rule, submission) => {
         const normalized = normalizeText(submission);
@@ -836,17 +1053,48 @@ function renderChallengeRuntimeScript(
         }
       };
 
+      const renderProgress = () => {
+        const learnedConcepts = collectLearnedConcepts();
+        const completedCount = Object.keys(state.completedById).length;
+
+        elements.progressCompleted.textContent = 'Completed: ' + completedCount + '/' + challengeCount;
+        elements.progressTier.textContent = 'Unlocked tier: TIER ' + state.unlockedTier;
+        elements.progressConceptsCount.textContent = 'Learned concepts: ' + learnedConcepts.length;
+
+        renderList(
+          elements.learnedConcepts,
+          learnedConcepts,
+          'Complete challenges to unlock concept summaries.',
+        );
+      };
+
       const renderListState = () => {
         elements.challengeList
           .querySelectorAll('button[data-challenge-id]')
           .forEach((button) => {
             const challengeId = button.getAttribute('data-challenge-id');
-            button.classList.toggle('is-active', challengeId === state.activeId);
-            button.classList.toggle('is-complete', Boolean(state.completed[challengeId]));
+            const challenge = challengeId ? byId[challengeId] : undefined;
+
+            if (!challenge) {
+              return;
+            }
+
+            const lockHint = button.querySelector('[data-lock-hint]');
+            const challengeBlockedReason = blockedReason(challenge);
+            const challengeIsUnlocked = challengeBlockedReason === null;
+            button.disabled = !challengeIsUnlocked;
+            button.classList.toggle('is-locked', !challengeIsUnlocked);
+            button.classList.toggle('is-active', challengeId === state.activeId && challengeIsUnlocked);
+            button.classList.toggle('is-complete', Boolean(state.completedById[challengeId]));
+
+            if (lockHint) {
+              lockHint.textContent = challengeBlockedReason ?? 'Unlocked';
+            }
           });
       };
 
       const renderChallenge = () => {
+        syncProgressState();
         const challenge = getActiveChallenge();
 
         elements.activeId.textContent = challenge.id;
@@ -864,9 +1112,11 @@ function renderChallengeRuntimeScript(
         state.shownHints = 0;
         renderCriteria(challenge.successCriteria);
         renderGuidance(challenge);
+        renderProgress();
         setLessonVisible(false);
         renderListState();
         emitChallengeChanged();
+        persistProfile();
       };
 
       elements.challengeList.addEventListener('click', (event) => {
@@ -879,6 +1129,17 @@ function renderChallengeRuntimeScript(
         const challengeId = button.getAttribute('data-challenge-id');
 
         if (!challengeId || !byId[challengeId]) {
+          return;
+        }
+
+        if (button.disabled) {
+          const challenge = byId[challengeId];
+          const reason = blockedReason(challenge);
+          if (reason) {
+            elements.feedback.textContent = reason;
+            elements.feedback.classList.remove('feedback-success');
+            elements.feedback.classList.add('feedback-failed');
+          }
           return;
         }
 
@@ -913,16 +1174,33 @@ function renderChallengeRuntimeScript(
           return;
         }
 
-        state.completed[challenge.id] = true;
+        if (!state.completedById[challenge.id]) {
+          state.completedById[challenge.id] = new Date().toISOString();
+        }
+        syncProgressState();
         elements.guidanceFailure.textContent = 'Latest submission passed validation.';
         elements.lessonSummary.textContent = challenge.completionLesson.whatYouLearned;
         elements.nextMission.textContent = challenge.completionLesson.nextMission;
         setLessonVisible(true);
+        renderProgress();
         renderListState();
+        persistProfile();
       });
 
       elements.resetButton.addEventListener('click', renderChallenge);
 
+      elements.profileSave.addEventListener('click', () => {
+        const nextName = String(elements.profileName.value ?? '').trim();
+        state.profileName = nextName.length > 0 ? nextName.slice(0, 60) : 'Learner';
+        elements.profileName.value = state.profileName;
+        elements.profileStatus.textContent = 'Saved profile for ' + state.profileName + '.';
+        persistProfile();
+      });
+
+      loadProfile();
+      elements.profileName.value = state.profileName;
+      elements.profileStatus.textContent = 'Loaded profile for ' + state.profileName + '.';
+      syncProgressState();
       renderChallenge();
     })();
   `;
