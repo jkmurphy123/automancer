@@ -1,6 +1,6 @@
 # OpenClaw Tutor UI Playground
 
-Milestone 3 agent interaction layer for the Tutor UI project.
+Milestone 4 skill registry and dynamic controls layer for the Tutor UI project.
 
 ## Quick start
 
@@ -32,9 +32,17 @@ Example:
 TUTOR_RUNTIME_MODE=mock npm run dev
 ```
 
-## Milestone 3 Scope
+## Milestone 4 Scope
 
-The app now supports a chat interaction layer on top of the Milestone 2 challenge engine:
+The app now supports a normalized skill metadata pipeline and dynamic skill controls layered on top of Milestone 3 chat/runtime behavior:
+
+- Normalized skill schema with stable fields for id/name/display name/description/category/parameters/examples/risk/installed/enabled
+- Skill registry adapter that converts raw/sample skill definitions into the normalized schema
+- Dynamic skill control rendering with metadata-driven form fields (`text`, `textarea`, `select`, `boolean`)
+- Sample end-to-end skill execution flow that writes updates to both chat transcript and skill activity feed
+- Challenge-context relevance hints that react to active challenge changes
+
+Milestone 3 interaction behavior remains active:
 
 - Chat message model (`user`, `agent`, `system`) with timestamped transcript state
 - Agent preset abstraction (`Tutor`, `Researcher`, `Mechanic`) with per-preset response behavior
@@ -59,6 +67,7 @@ Key implementation paths:
 - `src/runtime/adapter.ts`: runtime adapter interface
 - `src/runtime/mock-adapter.ts`: deterministic mock runtime implementation
 - `src/runtime/messages.ts`: chat message model utilities
+- `src/skills/sample-data.ts`: normalized skill schema, registry adapter, and relevance rules
 - `src/ui/shell.ts`: challenge board rendering and browser-side interaction wiring
 
 ## Verification

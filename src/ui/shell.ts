@@ -4,7 +4,7 @@ import { difficultyLabel } from '../challenges/loader.js';
 import type { ChallengeCatalog, ChallengeDefinition } from '../challenges/types.js';
 import type { ChatSessionConfig } from '../runtime/index.js';
 import { formatClockTime, type ChatMessage } from '../runtime/messages.js';
-import type { SkillRailState } from '../skills/sample-data.js';
+import { resolveSkillRelevanceHint, type SkillMetadata, type SkillRailState } from '../skills/sample-data.js';
 import { escapeHtml } from './escape.js';
 
 export interface AppShellState {
@@ -129,7 +129,66 @@ function renderChallengeBoard(catalog: ChallengeCatalog): string {
   `;
 }
 
-function renderChatAndSkills(chatSession: ChatSessionConfig, presets: AgentPreset[], skillRail: SkillRailState): string {
+function renderSkillParameters(skill: SkillMetadata): string {
+  if (skill.parameters.length === 0) {
+    return '<p class="meta">This skill has no configurable parameters.</p>';
+  }
+
+  return skill.parameters
+    .map((parameter) => {
+      if (parameter.type === 'select') {
+        const options = (parameter.options ?? [])
+          .map((option) => {
+            const isSelected = String(parameter.defaultValue ?? '') === option.value ? 'selected' : '';
+            return `<option value="${escapeHtml(option.value)}" ${isSelected}>${escapeHtml(option.label)}</option>`;
+          })
+          .join('');
+
+        return `
+          <label class="skill-field">
+            <span class="meta">${escapeHtml(parameter.label)}</span>
+            <select class="input-control" name="${escapeHtml(parameter.key)}">${options}</select>
+          </label>
+        `;
+      }
+
+      if (parameter.type === 'boolean') {
+        const checked = parameter.defaultValue === true ? 'checked' : '';
+        return `
+          <label class="skill-field checkbox-field">
+            <input type="checkbox" name="${escapeHtml(parameter.key)}" ${checked} />
+            <span class="meta">${escapeHtml(parameter.label)}</span>
+          </label>
+        `;
+      }
+
+      if (parameter.type === 'textarea') {
+        return `
+          <label class="skill-field">
+            <span class="meta">${escapeHtml(parameter.label)}</span>
+            <textarea class="submission-box skill-textarea" name="${escapeHtml(parameter.key)}" rows="3" placeholder="${escapeHtml(
+              parameter.placeholder ?? '',
+            )}"></textarea>
+          </label>
+        `;
+      }
+
+      return `
+        <label class="skill-field">
+          <span class="meta">${escapeHtml(parameter.label)}</span>
+          <input class="input-control" type="text" name="${escapeHtml(parameter.key)}" placeholder="${escapeHtml(parameter.placeholder ?? '')}" />
+        </label>
+      `;
+    })
+    .join('');
+}
+
+function renderChatAndSkills(
+  chatSession: ChatSessionConfig,
+  presets: AgentPreset[],
+  skillRail: SkillRailState,
+  activeChallenge: ChallengeDefinition,
+): string {
   const messages = chatSession.initialMessages
     .map(
       (message) => `
@@ -144,15 +203,27 @@ function renderChatAndSkills(chatSession: ChatSessionConfig, presets: AgentPrese
     )
     .join('');
 
-  const controls = skillRail.controls
+  const controls = skillRail.skills
     .map(
-      (control) => `
-      <li class="card control-row">
+      (skill) => `
+      <li class="card skill-card" data-skill-id="${escapeHtml(skill.id)}">
         <div>
-          <p class="step-label">${escapeHtml(control.name)}</p>
-          <p class="muted">${escapeHtml(control.description)}</p>
+          <p class="step-label">${escapeHtml(skill.displayName)}</p>
+          <p class="muted">${escapeHtml(skill.description)}</p>
+          <p class="meta skill-relevance" data-skill-relevance>
+            ${escapeHtml(resolveSkillRelevanceHint(skill, activeChallenge) ?? 'No challenge-specific hint yet.')}
+          </p>
+          <p class="meta">Risk: ${escapeHtml(skill.risk.toUpperCase())} · Category: ${escapeHtml(skill.category)}</p>
         </div>
-        <span class="badge ${control.enabled ? 'tone-ready' : 'tone-blocked'}">${control.enabled ? 'enabled' : 'disabled'}</span>
+        <div class="skill-actions">
+          <span class="badge ${skill.enabled ? 'tone-ready' : 'tone-blocked'}">${skill.enabled ? 'enabled' : 'disabled'}</span>
+          <form class="skill-form stack" data-skill-form>
+            ${renderSkillParameters(skill)}
+            <button class="button button-secondary" type="button" data-skill-run ${skill.enabled ? '' : 'disabled'}>
+              Run Skill
+            </button>
+          </form>
+        </div>
       </li>
     `,
     )
@@ -190,6 +261,10 @@ function renderChatAndSkills(chatSession: ChatSessionConfig, presets: AgentPrese
       <p class="feedback" data-chat-runtime-status>Runtime idle.</p>
       <h3>Skill Controls</h3>
       <ul class="stack">${controls}</ul>
+      <h3>Skill Activity</h3>
+      <ul class="stack" data-skill-activity>
+        <li class="card"><p class="meta">No skill executions yet.</p></li>
+      </ul>
     </section>
   `;
 }
@@ -495,6 +570,41 @@ function renderStyle(): string {
       font-weight: 600;
     }
 
+    .skill-card {
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .skill-actions {
+      display: grid;
+      gap: 0.5rem;
+      justify-items: start;
+    }
+
+    .skill-form {
+      gap: 0.45rem;
+      width: 100%;
+    }
+
+    .skill-field {
+      display: grid;
+      gap: 0.25rem;
+    }
+
+    .checkbox-field {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .skill-textarea {
+      min-height: 4.2rem;
+    }
+
+    .skill-relevance {
+      font-style: italic;
+    }
+
     @media (max-width: 1180px) {
       .app {
         grid-template-columns: 1fr;
@@ -618,6 +728,21 @@ function renderChallengeRuntimeScript(catalog: ChallengeCatalog): string {
 
       const getActiveChallenge = () => byId[state.activeId];
 
+      const emitChallengeChanged = () => {
+        const challenge = getActiveChallenge();
+
+        window.dispatchEvent(
+          new CustomEvent('challenge:changed', {
+            detail: {
+              id: challenge.id,
+              title: challenge.title,
+              summary: challenge.summary,
+              category: challenge.category,
+            },
+          }),
+        );
+      };
+
       const setLessonVisible = (visible) => {
         if (visible) {
           elements.lessonPanel.classList.remove('hidden');
@@ -665,6 +790,7 @@ function renderChallengeRuntimeScript(catalog: ChallengeCatalog): string {
         renderCriteria(challenge.successCriteria);
         setLessonVisible(false);
         renderListState();
+        emitChallengeChanged();
       };
 
       elements.challengeList.addEventListener('click', (event) => {
@@ -724,16 +850,19 @@ function renderChallengeRuntimeScript(catalog: ChallengeCatalog): string {
   `;
 }
 
-function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: AgentPreset[]): string {
+function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: AgentPreset[], skillRail: SkillRailState): string {
   return `
     (() => {
       const runtimeMode = ${serializeForInlineScript(chatSession.runtimeMode)};
       const defaultPresetId = ${serializeForInlineScript(chatSession.defaultPresetId)};
       const presets = ${serializeForInlineScript(presets)};
+      const skills = ${serializeForInlineScript(skillRail.skills)};
       const state = {
         selectedPresetId: defaultPresetId,
         messages: ${serializeForInlineScript(chatSession.initialMessages as ChatMessage[])},
         pending: false,
+        activeChallenge: null,
+        activity: [],
       };
 
       const elements = {
@@ -742,6 +871,8 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
         chatInput: document.querySelector('[data-chat-input]'),
         sendButton: document.querySelector('[data-chat-send]'),
         status: document.querySelector('[data-chat-runtime-status]'),
+        skillCards: document.querySelectorAll('[data-skill-id]'),
+        activity: document.querySelector('[data-skill-activity]'),
       };
 
       const formatTime = (isoValue) => {
@@ -811,6 +942,60 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
         });
       };
 
+      const renderActivity = () => {
+        if (state.activity.length === 0) {
+          elements.activity.innerHTML = '<li class="card"><p class="meta">No skill executions yet.</p></li>';
+          return;
+        }
+
+        elements.activity.innerHTML = '';
+        state.activity
+          .slice()
+          .reverse()
+          .forEach((entry) => {
+            const item = document.createElement('li');
+            item.className = 'card';
+            item.innerHTML =
+              '<p class="row-between"><span class="badge tone-neutral">skill</span><span class="meta">' +
+              formatTime(entry.createdAt) +
+              '</span></p><p>' +
+              entry.summary +
+              '</p>';
+            elements.activity.appendChild(item);
+          });
+      };
+
+      const computeRelevanceHint = (skill) => {
+        if (!state.activeChallenge) {
+          return 'Select a challenge to view relevance hints.';
+        }
+
+        const challengeText =
+          (state.activeChallenge.title + ' ' + state.activeChallenge.summary + ' ' + state.activeChallenge.category).toLowerCase();
+
+        for (const rule of skill.relevanceRules) {
+          if (rule.keywords.some((keyword) => challengeText.includes(String(keyword).toLowerCase()))) {
+            return rule.hint;
+          }
+        }
+
+        return 'No challenge-specific hint yet.';
+      };
+
+      const refreshSkillRelevance = () => {
+        elements.skillCards.forEach((card) => {
+          const skillId = card.getAttribute('data-skill-id');
+          const skill = skills.find((candidate) => candidate.id === skillId);
+          const hintTarget = card.querySelector('[data-skill-relevance]');
+
+          if (!skill || !hintTarget) {
+            return;
+          }
+
+          hintTarget.textContent = computeRelevanceHint(skill);
+        });
+      };
+
       const mockRuntimeSend = async (preset, userMessage) => {
         await new Promise((resolve) => {
           setTimeout(resolve, 220);
@@ -849,6 +1034,133 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
             '", capture one root cause, then apply the smallest safe fix.',
           systemNote: 'Mechanic mode generated a diagnosis-first response.',
         };
+      };
+
+      const mockRuntimeSkill = async (skill, parameters) => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 200);
+        });
+
+        if (!skill.enabled) {
+          throw new Error('Skill is disabled and cannot be executed.');
+        }
+
+        const challengeId = state.activeChallenge ? state.activeChallenge.id : 'no-active-challenge';
+        const parameterSummary = Object.entries(parameters)
+          .map(([key, value]) => key + '=' + String(value))
+          .join(', ');
+
+        if (skill.id === 'skill-plan-writer') {
+          return {
+            activity:
+              'Generated execution checklist for ' +
+              challengeId +
+              ': scope, checkpoints, and completion criteria ready.',
+            chatResponse:
+              'Plan Writer created a focused plan for ' +
+              challengeId +
+              '. Start with a thin vertical slice, then validate against success criteria.',
+            systemNote: 'Plan generated with inputs: ' + parameterSummary,
+          };
+        }
+
+        if (skill.id === 'skill-repo-search') {
+          return {
+            activity:
+              'Repo Search scanned references related to ' +
+              challengeId +
+              ' and returned likely extension points.',
+            chatResponse:
+              'Repo Search found candidate implementation anchors. Review runtime adapter and UI wiring first.',
+            systemNote: 'Search inputs: ' + parameterSummary,
+          };
+        }
+
+        return {
+          activity: 'Prepared QA handoff checklist for ' + challengeId + '.',
+          chatResponse: 'QA Handoff staged a verification checklist and release-risk summary for review.',
+          systemNote: 'QA handoff inputs: ' + parameterSummary,
+        };
+      };
+
+      const collectSkillParameters = (form, skill) => {
+        const values = {};
+
+        skill.parameters.forEach((parameter) => {
+          const field = form.elements.namedItem(parameter.key);
+
+          if (!field) {
+            return;
+          }
+
+          if (parameter.type === 'boolean') {
+            values[parameter.key] = Boolean(field.checked);
+            return;
+          }
+
+          values[parameter.key] = String(field.value ?? '').trim();
+        });
+
+        return values;
+      };
+
+      const executeSkill = async (skillId, triggerButton) => {
+        const skill = skills.find((candidate) => candidate.id === skillId);
+        if (!skill) {
+          return;
+        }
+
+        const card = triggerButton.closest('[data-skill-id]');
+        const form = card ? card.querySelector('[data-skill-form]') : null;
+        if (!form) {
+          return;
+        }
+
+        const parameters = collectSkillParameters(form, skill);
+        triggerButton.disabled = true;
+        setPending(true, 'Running ' + skill.displayName + '...');
+
+        try {
+          const result = await mockRuntimeSkill(skill, parameters);
+          state.activity.push({
+            id: nextId(),
+            createdAt: new Date().toISOString(),
+            summary: result.activity,
+          });
+
+          state.messages.push(
+            createMessage({
+              role: 'agent',
+              text: result.chatResponse,
+              agentPresetId: state.selectedPresetId,
+            }),
+          );
+
+          if (result.systemNote) {
+            state.messages.push(
+              createMessage({
+                role: 'system',
+                text: result.systemNote,
+              }),
+            );
+          }
+
+          renderActivity();
+          renderMessages();
+          setPending(false, skill.displayName + ' completed.');
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown skill execution failure.';
+          state.messages.push(
+            createMessage({
+              role: 'system',
+              text: skill.displayName + ' failed: ' + message,
+            }),
+          );
+          renderMessages();
+          setPending(false, skill.displayName + ' failed. See system message for details.');
+        } finally {
+          triggerButton.disabled = !skill.enabled;
+        }
       };
 
       const sendMessage = async () => {
@@ -922,7 +1234,30 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
         }
       });
 
+      elements.skillCards.forEach((card) => {
+        const runButton = card.querySelector('[data-skill-run]');
+        if (!runButton) {
+          return;
+        }
+
+        runButton.addEventListener('click', () => {
+          const skillId = card.getAttribute('data-skill-id');
+          if (!skillId) {
+            return;
+          }
+
+          void executeSkill(skillId, runButton);
+        });
+      });
+
+      window.addEventListener('challenge:changed', (event) => {
+        state.activeChallenge = event.detail ?? null;
+        refreshSkillRelevance();
+      });
+
       renderMessages();
+      renderActivity();
+      refreshSkillRelevance();
       setPending(false, 'Runtime idle.');
     })();
   `;
@@ -931,7 +1266,11 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
 export function renderAppShell(state: AppShellState): string {
   const dock = renderAgentDock(state.agents);
   const board = renderChallengeBoard(state.challengeCatalog);
-  const chat = renderChatAndSkills(state.chatSession, state.agentPresets, state.skillRail);
+  const activeChallenge = state.challengeCatalog.byId[state.challengeCatalog.defaultChallengeId];
+  if (activeChallenge === undefined) {
+    throw new Error(`Challenge ${state.challengeCatalog.defaultChallengeId} was not found in catalog.`);
+  }
+  const chat = renderChatAndSkills(state.chatSession, state.agentPresets, state.skillRail, activeChallenge);
 
   return `<!doctype html>
 <html lang="en">
@@ -948,7 +1287,7 @@ export function renderAppShell(state: AppShellState): string {
       ${chat}
     </main>
     <script>${renderChallengeRuntimeScript(state.challengeCatalog)}</script>
-    <script>${renderAgentInteractionScript(state.chatSession, state.agentPresets)}</script>
+    <script>${renderAgentInteractionScript(state.chatSession, state.agentPresets, state.skillRail)}</script>
   </body>
 </html>`;
 }

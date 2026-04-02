@@ -27,8 +27,14 @@ Milestone 1 delivers a static, modular shell that is intentionally shaped for fe
 - Add live chat stream updates and skill execution status in the right panel.
 - Add optimistic update and error states for each panel module.
 
-## Extension points for Milestone 4
+## Milestone 4 implementation notes
 
-- Add user/session-aware data partitioning and persisted preferences.
-- Add telemetry spans for panel render latency and interaction success/failure.
-- Add role-aware feature flags per panel (agent vs coach vs reviewer views).
+- Skill controls are now rendered from normalized metadata (`src/skills/sample-data.ts`) instead of fixed toggles.
+- Challenge changes emit browser events so skill relevance hints update with active challenge context.
+- Skill execution writes to both chat transcript and a dedicated activity feed in the right rail.
+
+## Extension points after Milestone 4
+
+- Replace sample registry input with installed skill ingestion from runtime adapters.
+- Persist skill execution history and challenge/agent preferences across sessions.
+- Add telemetry spans and role-aware feature flags to skill availability and execution.
