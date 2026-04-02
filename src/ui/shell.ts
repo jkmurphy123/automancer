@@ -22,6 +22,7 @@ export interface AppShellState {
   skillRail: SkillRailState;
   tutorGuidance: TutorGuidanceCatalog;
   lessonMap: Record<string, { whatYouLearned: string; nextMission: string }>;
+  runtimeBridgeBasePath: string;
 }
 
 const statusTone: Record<DockAgent['status'], string> = {
@@ -277,10 +278,11 @@ function renderChatAndSkills(
           <p class="meta">Risk: ${escapeHtml(skill.risk.toUpperCase())} · Category: ${escapeHtml(skill.category)}</p>
         </div>
         <div class="skill-actions">
-          <span class="badge ${skill.enabled ? 'tone-ready' : 'tone-blocked'}">${skill.enabled ? 'enabled' : 'disabled'}</span>
+          <span class="badge ${skill.installed ? 'tone-ready' : 'tone-blocked'}" data-skill-installed-badge>${skill.installed ? 'installed' : 'not installed'}</span>
+          <span class="badge ${skill.enabled ? 'tone-ready' : 'tone-blocked'}" data-skill-enabled-badge>${skill.enabled ? 'enabled' : 'disabled'}</span>
           <form class="skill-form stack" data-skill-form>
             ${renderSkillParameters(skill)}
-            <button class="button button-secondary" type="button" data-skill-run ${skill.enabled ? '' : 'disabled'}>
+            <button class="button button-secondary" type="button" data-skill-run ${skill.enabled && skill.installed ? '' : 'disabled'}>
               Run Skill
             </button>
           </form>
@@ -325,6 +327,13 @@ function renderChatAndSkills(
       <h3>Skill Activity</h3>
       <ul class="stack" data-skill-activity>
         <li class="card"><p class="meta">No skill executions yet.</p></li>
+      </ul>
+      <h3>Runtime Observability</h3>
+      <p class="controls-row">
+        <button class="button button-secondary" type="button" data-runtime-refresh>Refresh Runtime Log</button>
+      </p>
+      <ul class="stack" data-runtime-events>
+        <li class="card"><p class="meta">No runtime events yet.</p></li>
       </ul>
     </section>
   `;
@@ -1206,19 +1215,27 @@ function renderChallengeRuntimeScript(
   `;
 }
 
-function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: AgentPreset[], skillRail: SkillRailState): string {
+function renderAgentInteractionScript(
+  chatSession: ChatSessionConfig,
+  presets: AgentPreset[],
+  skillRail: SkillRailState,
+  runtimeBridgeBasePath: string,
+): string {
   return `
     (() => {
       const runtimeMode = ${serializeForInlineScript(chatSession.runtimeMode)};
       const defaultPresetId = ${serializeForInlineScript(chatSession.defaultPresetId)};
       const presets = ${serializeForInlineScript(presets)};
-      const skills = ${serializeForInlineScript(skillRail.skills)};
+      const runtimeBridgeBasePath = ${serializeForInlineScript(runtimeBridgeBasePath)};
       const state = {
         selectedPresetId: defaultPresetId,
+        sessionId: null,
         messages: ${serializeForInlineScript(chatSession.initialMessages as ChatMessage[])},
         pending: false,
+        skills: ${serializeForInlineScript(skillRail.skills)},
         activeChallenge: null,
         activity: [],
+        runtimeEvents: [],
       };
 
       const elements = {
@@ -1229,6 +1246,8 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
         status: document.querySelector('[data-chat-runtime-status]'),
         skillCards: document.querySelectorAll('[data-skill-id]'),
         activity: document.querySelector('[data-skill-activity]'),
+        runtimeEvents: document.querySelector('[data-runtime-events]'),
+        runtimeRefresh: document.querySelector('[data-runtime-refresh]'),
       };
 
       const formatTime = (isoValue) => {
@@ -1262,11 +1281,49 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
         state.pending = pending;
         elements.sendButton.disabled = pending;
         elements.presetSelect.disabled = pending;
+        elements.runtimeRefresh.disabled = pending;
         elements.status.textContent = label;
         elements.status.classList.toggle('feedback-failed', !pending && label.toLowerCase().includes('failed'));
       };
 
       const getPreset = () => presets.find((preset) => preset.id === state.selectedPresetId) ?? presets[0];
+
+      const toApiUrl = (path) => runtimeBridgeBasePath + path;
+
+      const requestJson = async (path, options = {}) => {
+        const response = await fetch(toApiUrl(path), {
+          ...options,
+          headers: {
+            'content-type': 'application/json',
+            ...(options.headers ?? {}),
+          },
+        });
+
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          const message = typeof payload.error === 'string' ? payload.error : 'Runtime request failed.';
+          throw new Error(message);
+        }
+
+        return payload;
+      };
+
+      const ensureSession = async () => {
+        if (state.sessionId) {
+          return state.sessionId;
+        }
+
+        const payload = await requestJson('/sessions', {
+          method: 'POST',
+          body: JSON.stringify({
+            runtimeMode,
+          }),
+        });
+
+        state.sessionId = payload.sessionId;
+        return state.sessionId;
+      };
 
       const renderMessages = () => {
         elements.thread.innerHTML = '';
@@ -1321,6 +1378,53 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
           });
       };
 
+      const renderRuntimeEvents = () => {
+        if (state.runtimeEvents.length === 0) {
+          elements.runtimeEvents.innerHTML = '<li class="card"><p class="meta">No runtime events yet.</p></li>';
+          return;
+        }
+
+        elements.runtimeEvents.innerHTML = '';
+        state.runtimeEvents.forEach((entry) => {
+          const item = document.createElement('li');
+          item.className = 'card';
+
+          const requestLabel = entry.requestId ? ' (' + String(entry.requestId).slice(0, 8) + ')' : '';
+          const detailPreview = Object.entries(entry.details ?? {})
+            .slice(0, 3)
+            .map(([key, value]) => key + '=' + String(value))
+            .join(' · ');
+
+          item.innerHTML =
+            '<p class="row-between"><span class="badge tone-neutral">' +
+            entry.type +
+            requestLabel +
+            '</span><span class="meta">' +
+            formatTime(entry.createdAt) +
+            '</span></p><p class="meta">' +
+            detailPreview +
+            '</p>';
+          elements.runtimeEvents.appendChild(item);
+        });
+      };
+
+      const refreshRuntimeEvents = async () => {
+        if (!state.sessionId) {
+          return;
+        }
+
+        try {
+          const payload = await requestJson('/sessions/' + state.sessionId + '/events?limit=20', {
+            method: 'GET',
+            headers: {},
+          });
+          state.runtimeEvents = Array.isArray(payload.events) ? payload.events : [];
+          renderRuntimeEvents();
+        } catch {
+          // Ignore refresh failures and keep last successful list.
+        }
+      };
+
       const computeRelevanceHint = (skill) => {
         if (!state.activeChallenge) {
           return 'Select a challenge to view relevance hints.';
@@ -1338,10 +1442,40 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
         return 'No challenge-specific hint yet.';
       };
 
+      const applySkillStateToCard = (card, skill) => {
+        const installedBadge = card.querySelector('[data-skill-installed-badge]');
+        const enabledBadge = card.querySelector('[data-skill-enabled-badge]');
+        const runButton = card.querySelector('[data-skill-run]');
+        const form = card.querySelector('[data-skill-form]');
+
+        if (installedBadge) {
+          installedBadge.textContent = skill.installed ? 'installed' : 'not installed';
+          installedBadge.className = 'badge ' + (skill.installed ? 'tone-ready' : 'tone-blocked');
+        }
+
+        if (enabledBadge) {
+          enabledBadge.textContent = skill.enabled ? 'enabled' : 'disabled';
+          enabledBadge.className = 'badge ' + (skill.enabled ? 'tone-ready' : 'tone-blocked');
+        }
+
+        if (runButton) {
+          runButton.disabled = !skill.installed || !skill.enabled || state.pending;
+        }
+
+        if (form) {
+          form.querySelectorAll('input, textarea, select, button').forEach((control) => {
+            if (control.hasAttribute('data-skill-run')) {
+              return;
+            }
+            control.disabled = !skill.installed || !skill.enabled || state.pending;
+          });
+        }
+      };
+
       const refreshSkillRelevance = () => {
         elements.skillCards.forEach((card) => {
           const skillId = card.getAttribute('data-skill-id');
-          const skill = skills.find((candidate) => candidate.id === skillId);
+          const skill = state.skills.find((candidate) => candidate.id === skillId);
           const hintTarget = card.querySelector('[data-skill-relevance]');
 
           if (!skill || !hintTarget) {
@@ -1349,94 +1483,26 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
           }
 
           hintTarget.textContent = computeRelevanceHint(skill);
+          applySkillStateToCard(card, skill);
         });
       };
 
-      const mockRuntimeSend = async (preset, userMessage) => {
-        await new Promise((resolve) => {
-          setTimeout(resolve, 220);
-        });
+      const refreshSkillsFromRuntime = async () => {
+        try {
+          const payload = await requestJson('/skills', {
+            method: 'GET',
+            headers: {},
+          });
 
-        const normalized = userMessage.text.trim().toLowerCase();
+          if (!Array.isArray(payload.skills)) {
+            return;
+          }
 
-        if (normalized.includes('__mock_error__')) {
-          throw new Error('Simulated mock runtime failure triggered by __mock_error__.');
+          state.skills = payload.skills;
+          refreshSkillRelevance();
+        } catch {
+          // Keep existing skill state if runtime skill inventory cannot be loaded.
         }
-
-        if (preset.id === 'tutor') {
-          return {
-            text:
-              'Start with one small step: ' +
-              userMessage.text +
-              '. Then verify against the challenge success criteria before moving on.',
-            systemNote: 'Tutor mode suggested a step-by-step coaching response.',
-          };
-        }
-
-        if (preset.id === 'researcher') {
-          return {
-            text:
-              'Evidence-first summary: identify two concrete facts about "' +
-              userMessage.text +
-              '" and note one unknown to verify.',
-            systemNote: 'Researcher mode prioritized factual grounding.',
-          };
-        }
-
-        return {
-          text:
-            'Debug pass: reproduce the issue described in "' +
-            userMessage.text +
-            '", capture one root cause, then apply the smallest safe fix.',
-          systemNote: 'Mechanic mode generated a diagnosis-first response.',
-        };
-      };
-
-      const mockRuntimeSkill = async (skill, parameters) => {
-        await new Promise((resolve) => {
-          setTimeout(resolve, 200);
-        });
-
-        if (!skill.enabled) {
-          throw new Error('Skill is disabled and cannot be executed.');
-        }
-
-        const challengeId = state.activeChallenge ? state.activeChallenge.id : 'no-active-challenge';
-        const parameterSummary = Object.entries(parameters)
-          .map(([key, value]) => key + '=' + String(value))
-          .join(', ');
-
-        if (skill.id === 'skill-plan-writer') {
-          return {
-            activity:
-              'Generated execution checklist for ' +
-              challengeId +
-              ': scope, checkpoints, and completion criteria ready.',
-            chatResponse:
-              'Plan Writer created a focused plan for ' +
-              challengeId +
-              '. Start with a thin vertical slice, then validate against success criteria.',
-            systemNote: 'Plan generated with inputs: ' + parameterSummary,
-          };
-        }
-
-        if (skill.id === 'skill-repo-search') {
-          return {
-            activity:
-              'Repo Search scanned references related to ' +
-              challengeId +
-              ' and returned likely extension points.',
-            chatResponse:
-              'Repo Search found candidate implementation anchors. Review runtime adapter and UI wiring first.',
-            systemNote: 'Search inputs: ' + parameterSummary,
-          };
-        }
-
-        return {
-          activity: 'Prepared QA handoff checklist for ' + challengeId + '.',
-          chatResponse: 'QA Handoff staged a verification checklist and release-risk summary for review.',
-          systemNote: 'QA handoff inputs: ' + parameterSummary,
-        };
       };
 
       const collectSkillParameters = (form, skill) => {
@@ -1461,7 +1527,7 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
       };
 
       const executeSkill = async (skillId, triggerButton) => {
-        const skill = skills.find((candidate) => candidate.id === skillId);
+        const skill = state.skills.find((candidate) => candidate.id === skillId);
         if (!skill) {
           return;
         }
@@ -1477,32 +1543,35 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
         setPending(true, 'Running ' + skill.displayName + '...');
 
         try {
-          const result = await mockRuntimeSkill(skill, parameters);
+          const sessionId = await ensureSession();
+          const payload = await requestJson('/sessions/' + sessionId + '/skills/' + skill.id + '/execute', {
+            method: 'POST',
+            body: JSON.stringify({
+              parameters,
+              activeChallengeId: state.activeChallenge?.id ?? null,
+            }),
+          });
+
           state.activity.push({
             id: nextId(),
             createdAt: new Date().toISOString(),
-            summary: result.activity,
+            summary:
+              payload.result.summary +
+              ' [request ' +
+              String(payload.requestId).slice(0, 8) +
+              ', ' +
+              String(payload.durationMs) +
+              'ms]',
           });
+          state.messages.push(createMessage({ role: 'agent', text: payload.result.chatResponse, agentPresetId: state.selectedPresetId }));
 
-          state.messages.push(
-            createMessage({
-              role: 'agent',
-              text: result.chatResponse,
-              agentPresetId: state.selectedPresetId,
-            }),
-          );
-
-          if (result.systemNote) {
-            state.messages.push(
-              createMessage({
-                role: 'system',
-                text: result.systemNote,
-              }),
-            );
+          if (payload.result.systemNote) {
+            state.messages.push(createMessage({ role: 'system', text: payload.result.systemNote }));
           }
 
           renderActivity();
           renderMessages();
+          await refreshRuntimeEvents();
           setPending(false, skill.displayName + ' completed.');
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown skill execution failure.';
@@ -1515,7 +1584,7 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
           renderMessages();
           setPending(false, skill.displayName + ' failed. See system message for details.');
         } finally {
-          triggerButton.disabled = !skill.enabled;
+          refreshSkillRelevance();
         }
       };
 
@@ -1542,11 +1611,19 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
         setPending(true, runtimeMode.toUpperCase() + ' runtime processing...');
 
         try {
-          const runtimeResponse = await mockRuntimeSend(preset, userMessage);
+          const sessionId = await ensureSession();
+          const runtimeResponse = await requestJson('/sessions/' + sessionId + '/messages', {
+            method: 'POST',
+            body: JSON.stringify({
+              presetId: preset.id,
+              text: userMessage.text,
+            }),
+          });
+
           state.messages.push(
             createMessage({
               role: 'agent',
-              text: runtimeResponse.text,
+              text: runtimeResponse.responseText,
               agentPresetId: preset.id,
             }),
           );
@@ -1561,6 +1638,7 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
           }
 
           renderMessages();
+          await refreshRuntimeEvents();
           setPending(false, 'Response received from ' + preset.name + ' via ' + runtimeMode.toUpperCase() + ' runtime.');
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown runtime failure.';
@@ -1580,6 +1658,9 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
         if (presets.some((preset) => preset.id === selectedId)) {
           state.selectedPresetId = selectedId;
         }
+      });
+      elements.runtimeRefresh.addEventListener('click', () => {
+        void refreshRuntimeEvents();
       });
 
       elements.sendButton.addEventListener('click', sendMessage);
@@ -1613,7 +1694,9 @@ function renderAgentInteractionScript(chatSession: ChatSessionConfig, presets: A
 
       renderMessages();
       renderActivity();
+      renderRuntimeEvents();
       refreshSkillRelevance();
+      void refreshSkillsFromRuntime();
       setPending(false, 'Runtime idle.');
     })();
   `;
@@ -1643,7 +1726,7 @@ export function renderAppShell(state: AppShellState): string {
       ${chat}
     </main>
     <script>${renderChallengeRuntimeScript(state.challengeCatalog, state.tutorGuidance, state.lessonMap)}</script>
-    <script>${renderAgentInteractionScript(state.chatSession, state.agentPresets, state.skillRail)}</script>
+    <script>${renderAgentInteractionScript(state.chatSession, state.agentPresets, state.skillRail, state.runtimeBridgeBasePath)}</script>
   </body>
 </html>`;
 }

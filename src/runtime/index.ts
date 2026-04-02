@@ -1,6 +1,7 @@
 import { defaultAgentPresetId, getAgentPresetById } from '../agents/presets.js';
 import type { RuntimeMode } from './adapter.js';
 import { createChatMessage, type ChatMessage } from './messages.js';
+import { LiveAgentRuntimeAdapter } from './live-adapter.js';
 import { MockAgentRuntimeAdapter } from './mock-adapter.js';
 
 export interface ChatSessionConfig {
@@ -39,9 +40,9 @@ export function createChatSessionConfig(runtimeMode: RuntimeMode): ChatSessionCo
   };
 }
 
-export function createServerRuntimeAdapter(runtimeMode: RuntimeMode): MockAgentRuntimeAdapter {
+export function createServerRuntimeAdapter(runtimeMode: RuntimeMode): MockAgentRuntimeAdapter | LiveAgentRuntimeAdapter {
   if (runtimeMode === 'live') {
-    return new MockAgentRuntimeAdapter();
+    return new LiveAgentRuntimeAdapter();
   }
 
   return new MockAgentRuntimeAdapter();

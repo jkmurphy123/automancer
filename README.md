@@ -1,6 +1,6 @@
 # OpenClaw Tutor UI Playground
 
-Milestone 5 tutor guidance system layered on top of skill registry, challenge validation, and runtime chat flows.
+Milestone 7 runtime integration refinement layered on top of tutor guidance, skill registry, challenge validation, and runtime chat flows.
 
 ## Quick start
 
@@ -24,7 +24,7 @@ Open `http://localhost:4173` in a browser.
 Use `TUTOR_RUNTIME_MODE` to select runtime behavior.
 
 - `mock` (default): deterministic local adapter responses
-- `live`: reserved adapter mode, currently falls back to the deterministic mock adapter
+- `live`: runtime bridge mode that routes chat/skill calls through server APIs with observability events
 
 Example:
 
@@ -32,7 +32,16 @@ Example:
 TUTOR_RUNTIME_MODE=mock npm run dev
 ```
 
-## Milestone 5 Scope
+## Milestone 7 Scope
+
+The app now includes a runtime session bridge and observability wiring:
+
+- Session bridge endpoints for chat requests and skill execution (`/api/runtime/sessions/*`)
+- Installed skill detection via environment (`OPENCLAW_INSTALLED_SKILLS`) or local skills directory scan
+- Tool execution feedback surfaced with request IDs and runtime durations in skill activity UI
+- Runtime event feed panel with refreshable observability timeline
+
+Milestone 5 tutor guidance behavior remains active:
 
 The app now supports contextual tutor guidance layered on top of Milestone 4 skill and Milestone 3 runtime behavior:
 
@@ -73,8 +82,11 @@ Key implementation paths:
 - `src/challenges/validation.ts`: deterministic completion evaluation
 - `src/agents/presets.ts`: preset abstraction model and metadata
 - `src/runtime/adapter.ts`: runtime adapter interface
+- `src/runtime/live-adapter.ts`: runtime bridge-aware live adapter behavior
 - `src/runtime/mock-adapter.ts`: deterministic mock runtime implementation
 - `src/runtime/messages.ts`: chat message model utilities
+- `src/runtime/session-bridge.ts`: in-memory session bridge, tool execution, and runtime event logging
+- `src/runtime/skill-inventory.ts`: installed skill detection and normalization for runtime UI state
 - `src/skills/sample-data.ts`: normalized skill schema, registry adapter, and relevance rules
 - `src/tutor/guidance.ts`: challenge lesson map and tutor guidance catalog helpers
 - `src/ui/shell.ts`: challenge board rendering and browser-side interaction wiring
