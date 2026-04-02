@@ -1,14 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
 import { sampleAgents } from './agents/sample-data.js';
-import { sampleChallenge } from './challenges/sample-data.js';
+import { createChallengeCatalog } from './challenges/loader.js';
+import type { ChallengeCatalog } from './challenges/types.js';
 import { sampleChatAndSkills } from './skills/sample-data.js';
 import { renderAppShell, type AppShellState } from './ui/shell.js';
 
 export function getSampleAppState(): AppShellState {
+  const challengeCatalog: ChallengeCatalog = createChallengeCatalog();
+
   return {
     agents: sampleAgents,
-    challenge: sampleChallenge,
+    challengeCatalog,
     chatAndSkills: sampleChatAndSkills,
   };
 }
