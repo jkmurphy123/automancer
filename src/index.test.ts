@@ -35,8 +35,8 @@ describe('renderAppShellHtml', () => {
     expect(html).toContain('Agent preset');
     expect(html).toContain('Run Skill');
     expect(html).toContain('Skill Activity');
-    expect(html).toContain('Runtime Observability');
-    expect(html).toContain('Refresh Runtime Log');
+    expect(html).not.toContain('Runtime Observability');
+    expect(html).not.toContain('Refresh Runtime Log');
     expect(html).toContain('Tutor Guidance');
     expect(html).toContain('Concept hints');
     expect(html).toContain('Suggested skills');

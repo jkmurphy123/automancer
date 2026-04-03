@@ -354,7 +354,10 @@ function renderChatAndSkills(
   skillRail: SkillRailState,
   activeChallenge: ChallengeDefinition,
 ): string {
-  const messages = chatSession.initialMessages
+  const visibleMessages = chatSession.debugMode
+    ? chatSession.initialMessages
+    : chatSession.initialMessages.filter((message) => message.role !== 'system');
+  const messages = visibleMessages
     .map(
       (message) => `
       <li class="card message">
@@ -367,6 +370,17 @@ function renderChatAndSkills(
     `,
     )
     .join('');
+  const runtimeObservability = chatSession.debugMode
+    ? `
+      <h3>Runtime Observability</h3>
+      <p class="controls-row">
+        <button class="button button-secondary" type="button" data-runtime-refresh>Refresh Runtime Log</button>
+      </p>
+      <ul class="stack" data-runtime-events>
+        <li class="card"><p class="meta">No runtime events yet.</p></li>
+      </ul>
+    `
+    : '';
 
   const controls = skillRail.skills
     .map(
@@ -431,13 +445,7 @@ function renderChatAndSkills(
       <ul class="stack" data-skill-activity>
         <li class="card"><p class="meta">No skill executions yet.</p></li>
       </ul>
-      <h3>Runtime Observability</h3>
-      <p class="controls-row">
-        <button class="button button-secondary" type="button" data-runtime-refresh>Refresh Runtime Log</button>
-      </p>
-      <ul class="stack" data-runtime-events>
-        <li class="card"><p class="meta">No runtime events yet.</p></li>
-      </ul>
+      ${runtimeObservability}
     </section>
   `;
 }

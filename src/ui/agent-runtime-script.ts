@@ -24,6 +24,7 @@ export function renderAgentInteractionScript(
   return `
     (() => {
       const runtimeMode = ${serializeForInlineScript(chatSession.runtimeMode)};
+      const debugMode = ${serializeForInlineScript(chatSession.debugMode)};
       const defaultPresetId = ${serializeForInlineScript(chatSession.defaultPresetId)};
       const presets = ${serializeForInlineScript(presets)};
       const runtimeBridgeBasePath = ${serializeForInlineScript(runtimeBridgeBasePath)};
@@ -86,11 +87,15 @@ export function renderAgentInteractionScript(
         ...payload,
       });
 
+      const shouldDisplayMessage = (message) => debugMode || message.role !== 'system';
+
       const setPending = (pending, label) => {
         state.pending = pending;
         elements.sendButton.disabled = pending;
         elements.presetSelect.disabled = pending;
-        elements.runtimeRefresh.disabled = pending;
+        if (elements.runtimeRefresh) {
+          elements.runtimeRefresh.disabled = pending;
+        }
         elements.status.textContent = label;
         elements.status.classList.toggle('feedback-failed', !pending && label.toLowerCase().includes('failed'));
       };
@@ -278,7 +283,7 @@ export function renderAgentInteractionScript(
       const renderMessages = () => {
         elements.thread.innerHTML = '';
 
-        state.messages.forEach((message) => {
+        state.messages.filter(shouldDisplayMessage).forEach((message) => {
           const item = document.createElement('li');
           item.className = 'card message';
 
@@ -329,6 +334,10 @@ export function renderAgentInteractionScript(
       };
 
       const renderRuntimeEvents = () => {
+        if (!debugMode || !elements.runtimeEvents) {
+          return;
+        }
+
         if (state.runtimeEvents.length === 0) {
           elements.runtimeEvents.innerHTML = '<li class="card"><p class="meta">No runtime events yet.</p></li>';
           return;
@@ -359,7 +368,7 @@ export function renderAgentInteractionScript(
       };
 
       const refreshRuntimeEvents = async () => {
-        if (!state.sessionId) {
+        if (!debugMode || !state.sessionId) {
           return;
         }
 
@@ -515,7 +524,7 @@ export function renderAgentInteractionScript(
           });
           state.messages.push(createMessage({ role: 'agent', text: payload.result.chatResponse, agentPresetId: state.selectedPresetId }));
 
-          if (payload.result.systemNote) {
+          if (debugMode && payload.result.systemNote) {
             state.messages.push(createMessage({ role: 'system', text: payload.result.systemNote }));
           }
 
@@ -526,12 +535,14 @@ export function renderAgentInteractionScript(
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown skill execution failure.';
           pushSystemMessage('error', skill.displayName + ' failed: ' + message);
-          state.messages.push(
-            createMessage({
-              role: 'system',
-              text: skill.displayName + ' failed: ' + message,
-            }),
-          );
+          if (debugMode) {
+            state.messages.push(
+              createMessage({
+                role: 'system',
+                text: skill.displayName + ' failed: ' + message,
+              }),
+            );
+          }
           renderMessages();
           setPending(false, skill.displayName + ' failed. See system message for details.');
         } finally {
@@ -579,7 +590,7 @@ export function renderAgentInteractionScript(
             }),
           );
 
-          if (runtimeResponse.systemNote) {
+          if (debugMode && runtimeResponse.systemNote) {
             state.messages.push(
               createMessage({
                 role: 'system',
@@ -601,12 +612,14 @@ export function renderAgentInteractionScript(
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown runtime failure.';
           pushSystemMessage('error', 'Runtime failed: ' + message);
-          state.messages.push(
-            createMessage({
-              role: 'system',
-              text: 'Runtime failed: ' + message,
-            }),
-          );
+          if (debugMode) {
+            state.messages.push(
+              createMessage({
+                role: 'system',
+                text: 'Runtime failed: ' + message,
+              }),
+            );
+          }
           renderMessages();
           setPending(false, 'Runtime request failed. See system message for details.');
         }
@@ -665,7 +678,7 @@ export function renderAgentInteractionScript(
           state.selectedPresetId = selectedId;
         }
       });
-      elements.runtimeRefresh.addEventListener('click', () => {
+      elements.runtimeRefresh?.addEventListener('click', () => {
         void refreshRuntimeEvents();
       });
       elements.systemMessages?.addEventListener('click', (event) => {

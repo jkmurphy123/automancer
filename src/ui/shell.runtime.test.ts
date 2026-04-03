@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 
 import { getSampleAppState } from '../index.js';
+import { createChatSessionConfig } from '../runtime/index.js';
 import { renderAppShell } from './shell.js';
 
 interface DomHarness {
@@ -20,6 +21,7 @@ function jsonResponse(payload: unknown): { ok: true; json: () => Promise<unknown
 
 function createDom(preloadedProfile?: string): DomHarness {
   const appState = getSampleAppState();
+  appState.chatSession = createChatSessionConfig('mock', true);
   const runtimeSkills = appState.skillRail.skills.map((skill) =>
     skill.id === 'skill-plan-writer' ? { ...skill, installed: true, enabled: true } : skill,
   );

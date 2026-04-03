@@ -79,6 +79,58 @@ interface GatewayAgentEventPayload {
   data?: unknown;
 }
 
+interface GatewayHistoryMessage {
+  role?: unknown;
+  content?: unknown;
+}
+
+interface GatewayHistoryResponse {
+  messages?: unknown;
+}
+
+function summarizeValueShape(value: unknown): string {
+  if (typeof value === 'string') {
+    return 'string';
+  }
+
+  if (Array.isArray(value)) {
+    return `array(${value.length})`;
+  }
+
+  if (!isRecord(value)) {
+    return typeof value;
+  }
+
+  return 'object{' + Object.keys(value).slice(0, 6).join(',') + '}';
+}
+
+function extractLatestAssistantTextFromHistory(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const messages = Array.isArray((value as GatewayHistoryResponse).messages)
+    ? ((value as GatewayHistoryResponse).messages as GatewayHistoryMessage[])
+    : null;
+  if (!messages) {
+    return null;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isRecord(message) || message.role !== 'assistant') {
+      continue;
+    }
+
+    const text = extractMessageText(message.content);
+    if (text) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
 const GATEWAY_CLIENT_SCOPES = [
   'operator.admin',
   'operator.read',
@@ -365,6 +417,7 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
     >();
     const runId = randomUUID();
     let streamedText = '';
+    let chatSendResponse: LiveRuntimeBridgeResponse | null = null;
     let settled = false;
     let observedSessionKey: string | null = null;
 
@@ -382,7 +435,11 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
       pending.clear();
     };
 
-    const gatewayRequest = async <T>(method: string, params: unknown): Promise<T> =>
+    const gatewayRequest = async <T>(
+      method: string,
+      params: unknown,
+      onResponse?: (value: unknown) => void,
+    ): Promise<T> =>
       await new Promise<T>((resolve, reject) => {
         if (settled) {
           reject(new Error('Gateway socket already settled.'));
@@ -392,6 +449,7 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
         const id = randomUUID();
         pending.set(id, {
           resolve: (value) => {
+            onResponse?.(value);
             resolve(value as T);
           },
           reject,
@@ -466,6 +524,8 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
               message: request.userMessage.text,
               deliver: true,
               idempotencyKey: runId,
+            }, (payload) => {
+              chatSendResponse = normalizeBridgeResponse(payload);
             });
           } catch (error) {
             settleFailure(error instanceof Error ? error : new Error('Gateway connect failed.'));
@@ -567,15 +627,49 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
         }
 
         if (payloadState === 'final') {
-          const text = extractMessageText(payload.message) ?? streamedText.trim();
+          const text =
+            extractMessageText(payload.message) ??
+            (streamedText.trim() || chatSendResponse?.text);
           if (!text) {
-            settleFailure(new Error('Gateway chat completed without a text response.'));
+            void (async () => {
+              try {
+                const history = await gatewayRequest('chat.history', {
+                  sessionKey: observedSessionKey ?? this.sessionKey,
+                  limit: 10,
+                });
+                const historyText = extractLatestAssistantTextFromHistory(history);
+                if (historyText) {
+                  const sessionNote = `OpenClaw gateway session ${this.sessionKey}.`;
+                  settleSuccess({
+                    text: historyText,
+                    systemNote: chatSendResponse?.systemNote
+                      ? `${chatSendResponse.systemNote} ${sessionNote}`
+                      : sessionNote,
+                  });
+                  return;
+                }
+              } catch {
+                // Fall through to the detailed failure below.
+              }
+
+              const finalShape = summarizeValueShape(payload.message);
+              const responseShape = summarizeValueShape(chatSendResponse);
+              settleFailure(
+                new Error(
+                  `Gateway chat completed without a text response. finalMessage=${finalShape}; chatSendResponse=${responseShape}; runId=${runId}`,
+                ),
+              );
+            })();
             return;
           }
 
+          const sessionNote = `OpenClaw gateway session ${this.sessionKey}.`;
+
           settleSuccess({
             text,
-            systemNote: `OpenClaw gateway session ${this.sessionKey}.`,
+            systemNote: chatSendResponse?.systemNote
+              ? `${chatSendResponse.systemNote} ${sessionNote}`
+              : sessionNote,
           });
           return;
         }

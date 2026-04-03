@@ -6,7 +6,7 @@ import { agentPresets } from './agents/presets.js';
 import { sampleAgents } from './agents/sample-data.js';
 import { createChallengeCatalog } from './challenges/loader.js';
 import type { ChallengeCatalog } from './challenges/types.js';
-import { createChatSessionConfig, resolveRuntimeMode } from './runtime/index.js';
+import { createChatSessionConfig, resolveDebugMode, resolveRuntimeMode } from './runtime/index.js';
 import { RuntimeSessionBridge } from './runtime/session-bridge.js';
 import { buildSkillInventory } from './runtime/skill-inventory.js';
 import { sampleSkillRail } from './skills/sample-data.js';
@@ -68,6 +68,7 @@ function loadProjectEnvFiles(): void {
 loadProjectEnvFiles();
 
 const runtimeMode = resolveRuntimeMode(process.env.TUTOR_RUNTIME_MODE);
+const debugMode = resolveDebugMode(process.env.debug_mode ?? process.env.TUTOR_DEBUG_MODE);
 const skillInventory = buildSkillInventory(sampleSkillRail.skills);
 const runtimeSessionBridge = new RuntimeSessionBridge(skillInventory.skills);
 
@@ -127,7 +128,7 @@ function parseLimit(searchParams: URLSearchParams): number {
 
 export function getSampleAppState(): AppShellState {
   const challengeCatalog: ChallengeCatalog = createChallengeCatalog();
-  const chatSession = createChatSessionConfig(runtimeMode);
+  const chatSession = createChatSessionConfig(runtimeMode, debugMode);
   const skillRail = {
     ...sampleSkillRail,
     skills: skillInventory.skills,

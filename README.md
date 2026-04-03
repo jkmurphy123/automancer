@@ -36,6 +36,11 @@ Example:
 TUTOR_RUNTIME_MODE=mock npm run dev
 ```
 
+Set `debug_mode` to control debug-only UI behavior (default `false`):
+
+- `false`: hides Runtime Observability and suppresses `system` chat responses
+- `true`: shows Runtime Observability and full `user` / `agent` / `system` transcript
+
 Live mode bridge controls:
 
 - `TUTOR_RUNTIME_LIVE_ENDPOINT`: HTTP endpoint for live runtime message execution (POST JSON).

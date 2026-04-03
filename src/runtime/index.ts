@@ -6,6 +6,7 @@ import { MockAgentRuntimeAdapter } from './mock-adapter.js';
 
 export interface ChatSessionConfig {
   runtimeMode: RuntimeMode;
+  debugMode: boolean;
   defaultPresetId: string;
   initialMessages: ChatMessage[];
 }
@@ -14,7 +15,12 @@ export function resolveRuntimeMode(envMode: string | undefined): RuntimeMode {
   return envMode === 'live' ? 'live' : 'mock';
 }
 
-export function createChatSessionConfig(runtimeMode: RuntimeMode): ChatSessionConfig {
+export function resolveDebugMode(envMode: string | undefined): boolean {
+  const normalized = envMode?.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
+}
+
+export function createChatSessionConfig(runtimeMode: RuntimeMode, debugMode = false): ChatSessionConfig {
   const preset = getAgentPresetById(defaultAgentPresetId);
 
   if (preset === undefined) {
@@ -35,6 +41,7 @@ export function createChatSessionConfig(runtimeMode: RuntimeMode): ChatSessionCo
 
   return {
     runtimeMode,
+    debugMode,
     defaultPresetId: preset.id,
     initialMessages,
   };
