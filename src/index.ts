@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { agentPresets } from './agents/presets.js';
 import { sampleAgents } from './agents/sample-data.js';
@@ -10,6 +12,60 @@ import { buildSkillInventory } from './runtime/skill-inventory.js';
 import { sampleSkillRail } from './skills/sample-data.js';
 import { buildChallengeLessonMap, buildTutorGuidanceCatalog } from './tutor/guidance.js';
 import { renderAppShell, type AppShellState } from './ui/shell.js';
+
+function parseEnvFile(filePath: string): Record<string, string> {
+  const entries: Record<string, string> = {};
+  const source = readFileSync(filePath, 'utf8');
+
+  for (const line of source.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+
+    if (trimmed.length === 0 || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex < 1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    let value = trimmed.slice(separatorIndex + 1).trim();
+
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\'')))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    entries[key] = value;
+  }
+
+  return entries;
+}
+
+function loadProjectEnvFiles(): void {
+  const projectRoot = resolve(process.cwd());
+
+  for (const relativePath of ['.env', '.env.local']) {
+    const filePath = resolve(projectRoot, relativePath);
+
+    if (!existsSync(filePath)) {
+      continue;
+    }
+
+    const parsed = parseEnvFile(filePath);
+
+    for (const [key, value] of Object.entries(parsed)) {
+      if (process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+loadProjectEnvFiles();
 
 const runtimeMode = resolveRuntimeMode(process.env.TUTOR_RUNTIME_MODE);
 const skillInventory = buildSkillInventory(sampleSkillRail.skills);

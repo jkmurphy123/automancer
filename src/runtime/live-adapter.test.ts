@@ -279,8 +279,12 @@ describe('LiveAgentRuntimeAdapter', () => {
     const adapter = new LiveAgentRuntimeAdapter({
       endpoint: 'ws://127.0.0.1:18789',
       token: 'gateway-token',
+      origin: 'http://localhost:4173',
       sessionKey: 'main',
-      webSocketFactory: () => socket,
+      webSocketFactory: (_url, options) => {
+        expect(options).toEqual({ origin: 'http://localhost:4173' });
+        return socket;
+      },
       timeoutMs: 200,
       latencyMs: 0,
     });
@@ -306,7 +310,248 @@ describe('LiveAgentRuntimeAdapter', () => {
     expect(socket.sentFrames[0]).toContain('"method":"connect"');
     expect(socket.sentFrames[0]).toContain('"token":"gateway-token"');
     expect(socket.sentFrames[1]).toContain('"method":"chat.send"');
+    expect(socket.sentFrames[1]).toContain('"deliver":true');
     expect(socket.sentFrames[1]).toContain('"sessionKey":"main"');
+  });
+
+  it('accepts streamed gateway text when final event omits message content', async () => {
+    const socket = new FakeGatewaySocket();
+    socket.send = function send(data: string): void {
+      this.sentFrames.push(data);
+
+      const frame = JSON.parse(data) as { id?: string; method?: string };
+      if (!frame.id || !frame.method) {
+        return;
+      }
+
+      if (frame.method === 'connect') {
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'res',
+            id: frame.id,
+            ok: true,
+            payload: {
+              type: 'hello-ok',
+            },
+          }),
+        });
+        return;
+      }
+
+      if (frame.method === 'chat.send') {
+        const payload = JSON.parse(data) as {
+          id: string;
+          params?: {
+            idempotencyKey?: string;
+            sessionKey?: string;
+          };
+        };
+
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'res',
+            id: payload.id,
+            ok: true,
+            payload: {
+              accepted: true,
+            },
+          }),
+        });
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'event',
+            event: 'chat',
+            payload: {
+              sessionKey: payload.params?.sessionKey,
+              runId: payload.params?.idempotencyKey,
+              state: 'delta',
+              message: {
+                content: [
+                  {
+                    type: 'text',
+                    text: 'openclaw ',
+                  },
+                ],
+              },
+            },
+          }),
+        });
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'event',
+            event: 'chat',
+            payload: {
+              sessionKey: payload.params?.sessionKey,
+              runId: payload.params?.idempotencyKey,
+              state: 'delta',
+              message: {
+                content: [
+                  {
+                    type: 'text',
+                    text: 'gateway reply',
+                  },
+                ],
+              },
+            },
+          }),
+        });
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'event',
+            event: 'chat',
+            payload: {
+              sessionKey: payload.params?.sessionKey,
+              runId: payload.params?.idempotencyKey,
+              state: 'final',
+            },
+          }),
+        });
+      }
+    };
+    const adapter = new LiveAgentRuntimeAdapter({
+      endpoint: 'ws://127.0.0.1:18789',
+      sessionKey: 'main',
+      webSocketFactory: () => socket,
+      timeoutMs: 200,
+      latencyMs: 0,
+    });
+    const tutor = getAgentPresetById('tutor');
+
+    expect(tutor).toBeDefined();
+
+    const responsePromise = adapter.sendMessage({
+      preset: tutor!,
+      userMessage: makeUserMessage('what should I do next?'),
+      conversation: [],
+      availableSkills: [],
+    });
+
+    socket.emit('open');
+
+    const result = await responsePromise;
+
+    expect(result.text).toBe('openclaw gateway reply');
+    expect(result.runtimeSource).toBe('live_bridge');
+  });
+
+  it('accepts native gateway canonical session keys and agent assistant deltas', async () => {
+    const socket = new FakeGatewaySocket();
+    socket.send = function send(data: string): void {
+      this.sentFrames.push(data);
+
+      const frame = JSON.parse(data) as { id?: string; method?: string };
+      if (!frame.id || !frame.method) {
+        return;
+      }
+
+      if (frame.method === 'connect') {
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'res',
+            id: frame.id,
+            ok: true,
+            payload: {
+              type: 'hello-ok',
+            },
+          }),
+        });
+        return;
+      }
+
+      if (frame.method === 'chat.send') {
+        const payload = JSON.parse(data) as {
+          id: string;
+          params?: {
+            idempotencyKey?: string;
+          };
+        };
+
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'res',
+            id: payload.id,
+            ok: true,
+            payload: {
+              accepted: true,
+            },
+          }),
+        });
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'event',
+            event: 'agent',
+            payload: {
+              runId: payload.params?.idempotencyKey,
+              sessionKey: 'agent:main:main',
+              stream: 'assistant',
+              data: {
+                text: 'P',
+                delta: 'P',
+              },
+            },
+          }),
+        });
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'event',
+            event: 'agent',
+            payload: {
+              runId: payload.params?.idempotencyKey,
+              sessionKey: 'agent:main:main',
+              stream: 'assistant',
+              data: {
+                text: 'PINEAPPLE',
+                delta: 'INEAPPLE',
+              },
+            },
+          }),
+        });
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'event',
+            event: 'chat',
+            payload: {
+              runId: payload.params?.idempotencyKey,
+              sessionKey: 'agent:main:main',
+              state: 'final',
+              message: {
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'PINEAPPLE',
+                  },
+                ],
+              },
+            },
+          }),
+        });
+      }
+    };
+    const adapter = new LiveAgentRuntimeAdapter({
+      endpoint: 'ws://127.0.0.1:18789',
+      sessionKey: 'main',
+      webSocketFactory: () => socket,
+      timeoutMs: 200,
+      latencyMs: 0,
+    });
+    const tutor = getAgentPresetById('tutor');
+
+    expect(tutor).toBeDefined();
+
+    const responsePromise = adapter.sendMessage({
+      preset: tutor!,
+      userMessage: makeUserMessage('what should I do next?'),
+      conversation: [],
+      availableSkills: [],
+    });
+
+    socket.emit('open');
+
+    const result = await responsePromise;
+
+    expect(result.text).toBe('PINEAPPLE');
+    expect(result.runtimeSource).toBe('live_bridge');
   });
 
   it('falls back deterministically when endpoint is not configured', async () => {

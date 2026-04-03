@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { WebSocket as NodeWebSocket } from 'ws';
+
 import type { AgentRuntimeAdapter, RuntimeRequest, RuntimeResponse } from './adapter.js';
 import { MockAgentRuntimeAdapter } from './mock-adapter.js';
 
@@ -7,13 +9,14 @@ interface LiveRuntimeConfig {
   endpoint?: string;
   token?: string;
   password?: string;
+  origin?: string;
   sessionKey?: string;
   timeoutMs?: number;
   maxAttempts?: number;
   retryDelayMs?: number;
   latencyMs?: number;
   fetchImpl?: typeof fetch;
-  webSocketFactory?: (url: string) => GatewaySocket;
+  webSocketFactory?: (url: string, options?: { origin?: string }) => GatewaySocket;
 }
 
 interface LiveRuntimeBridgeResponse {
@@ -69,6 +72,13 @@ interface GatewayChatEventPayload {
   message?: unknown;
 }
 
+interface GatewayAgentEventPayload {
+  sessionKey?: unknown;
+  runId?: unknown;
+  stream?: unknown;
+  data?: unknown;
+}
+
 const GATEWAY_CLIENT_SCOPES = [
   'operator.admin',
   'operator.read',
@@ -99,20 +109,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function extractMessageText(value: unknown): string | null {
+function extractMessageText(value: unknown, preserveWhitespace = false): string | null {
   if (typeof value === 'string') {
+    if (preserveWhitespace) {
+      return value.length > 0 && value.trim().length > 0 ? value : null;
+    }
+
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
   }
 
   if (Array.isArray(value)) {
     const text = value
-      .map((entry) => extractMessageText(entry))
+      .map((entry) => extractMessageText(entry, preserveWhitespace))
       .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
-      .join('\n')
-      .trim();
+      .join('\n');
 
-    return text.length > 0 ? text : null;
+    if (preserveWhitespace) {
+      return text.length > 0 && text.trim().length > 0 ? text : null;
+    }
+
+    const trimmed = text.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
   if (!isRecord(value)) {
@@ -122,14 +140,18 @@ function extractMessageText(value: unknown): string | null {
   const directKeys = ['text', 'responseText', 'message', 'content'];
 
   for (const key of directKeys) {
-    const candidate = extractMessageText(value[key]);
+    const candidate = extractMessageText(value[key], preserveWhitespace);
     if (candidate) {
       return candidate;
     }
   }
 
   if (typeof value.type === 'string' && value.type === 'text' && typeof value.text === 'string') {
-    return value.text.trim();
+    return preserveWhitespace
+      ? value.text.length > 0 && value.text.trim().length > 0
+        ? value.text
+        : null
+      : value.text.trim();
   }
 
   return null;
@@ -170,6 +192,8 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
 
   private readonly password: string | undefined;
 
+  private readonly origin: string | undefined;
+
   private readonly sessionKey: string;
 
   private readonly timeoutMs: number;
@@ -180,7 +204,7 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
 
   private readonly fetchImpl: typeof fetch;
 
-  private readonly webSocketFactory: (url: string) => GatewaySocket;
+  private readonly webSocketFactory: (url: string, options?: { origin?: string }) => GatewaySocket;
 
   private readonly fallback: MockAgentRuntimeAdapter;
 
@@ -188,12 +212,15 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
     this.endpoint = config.endpoint ?? process.env.TUTOR_RUNTIME_LIVE_ENDPOINT;
     this.token = config.token ?? process.env.TUTOR_RUNTIME_LIVE_TOKEN;
     this.password = config.password ?? process.env.TUTOR_RUNTIME_LIVE_PASSWORD;
+    this.origin = config.origin ?? process.env.TUTOR_RUNTIME_LIVE_ORIGIN;
     this.sessionKey = config.sessionKey ?? process.env.TUTOR_RUNTIME_LIVE_SESSION_KEY ?? 'main';
     this.timeoutMs = config.timeoutMs ?? parsePositiveInteger(process.env.TUTOR_RUNTIME_LIVE_TIMEOUT_MS, 1500);
     this.maxAttempts = config.maxAttempts ?? parsePositiveInteger(process.env.TUTOR_RUNTIME_LIVE_MAX_ATTEMPTS, 2);
     this.retryDelayMs = config.retryDelayMs ?? parsePositiveInteger(process.env.TUTOR_RUNTIME_LIVE_RETRY_DELAY_MS, 150);
     this.fetchImpl = config.fetchImpl ?? fetch;
-    this.webSocketFactory = config.webSocketFactory ?? ((url) => new WebSocket(url) as GatewaySocket);
+    this.webSocketFactory =
+      config.webSocketFactory ??
+      ((url, options) => new NodeWebSocket(url, options?.origin ? { origin: options.origin } : {}) as GatewaySocket);
     this.fallback = new MockAgentRuntimeAdapter({ latencyMs: config.latencyMs ?? 280 });
   }
 
@@ -328,7 +355,7 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
     request: RuntimeRequest,
     signal: AbortSignal,
   ): Promise<LiveRuntimeBridgeResponse> {
-    const socket = this.webSocketFactory(endpoint);
+    const socket = this.webSocketFactory(endpoint, this.origin ? { origin: this.origin } : undefined);
     const pending = new Map<
       string,
       {
@@ -339,6 +366,7 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
     const runId = randomUUID();
     let streamedText = '';
     let settled = false;
+    let observedSessionKey: string | null = null;
 
     const cleanup = (closeCode?: number, closeReason?: string): void => {
       if (socket.readyState < 2) {
@@ -413,8 +441,8 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
               minProtocol: 3,
               maxProtocol: 3,
               client: {
-                id: 'openclaw-tutor-ui',
-                version: '0.1.0',
+                id: 'openclaw-control-ui',
+                version: 'control-ui',
                 platform: 'node',
                 mode: 'webchat',
               },
@@ -436,7 +464,7 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
             await gatewayRequest('chat.send', {
               sessionKey: this.sessionKey,
               message: request.userMessage.text,
-              deliver: false,
+              deliver: true,
               idempotencyKey: runId,
             });
           } catch (error) {
@@ -481,7 +509,29 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
         }
 
         const eventFrame = parsed as GatewayEventFrame;
-        if (eventFrame.type !== 'event' || eventFrame.event !== 'chat' || !isRecord(eventFrame.payload)) {
+        if (eventFrame.type !== 'event' || !isRecord(eventFrame.payload)) {
+          return;
+        }
+
+        if (eventFrame.event === 'agent') {
+          const payload = eventFrame.payload as GatewayAgentEventPayload;
+          const payloadRunId = typeof payload.runId === 'string' ? payload.runId : null;
+          const payloadStream = typeof payload.stream === 'string' ? payload.stream : null;
+
+          if (payloadRunId !== runId || payloadStream !== 'assistant') {
+            return;
+          }
+
+          const nextChunk =
+            (isRecord(payload.data) ? extractMessageText(payload.data.delta, true) : null) ??
+            (isRecord(payload.data) ? extractMessageText(payload.data.text, true) : null);
+          if (nextChunk) {
+            streamedText += nextChunk;
+          }
+          return;
+        }
+
+        if (eventFrame.event !== 'chat') {
           return;
         }
 
@@ -490,18 +540,28 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
         const payloadRunId = typeof payload.runId === 'string' ? payload.runId : null;
         const payloadState = typeof payload.state === 'string' ? payload.state : null;
 
-        if (payloadSessionKey !== this.sessionKey) {
-          return;
-        }
-
         if (payloadRunId && payloadRunId !== runId) {
           return;
         }
 
+        if (payloadSessionKey) {
+          observedSessionKey ??= payloadSessionKey;
+        }
+
+        if (!payloadRunId) {
+          const matchesRequestedSession =
+            payloadSessionKey === this.sessionKey ||
+            payloadSessionKey === observedSessionKey ||
+            (typeof payloadSessionKey === 'string' && payloadSessionKey.endsWith(`:${this.sessionKey}`));
+          if (!matchesRequestedSession) {
+            return;
+          }
+        }
+
         if (payloadState === 'delta') {
-          const nextChunk = extractMessageText(payload.message);
+          const nextChunk = extractMessageText(payload.message, true);
           if (nextChunk) {
-            streamedText = nextChunk;
+            streamedText += nextChunk;
           }
           return;
         }

@@ -11,6 +11,10 @@ npm run dev
 
 Open `http://localhost:4173` in a browser.
 
+To persist local runtime settings across launches, copy `.env.example` to `.env.local` and fill in your OpenClaw values. The server automatically loads `.env` first and `.env.local` second on startup.
+
+For OpenClaw native gateway mode, set `TUTOR_RUNTIME_LIVE_ORIGIN` to the tutor app origin and add the same value to OpenClaw `gateway.controlUi.allowedOrigins`.
+
 ## Scripts
 
 - `npm run dev`: start local shell server
@@ -35,6 +39,7 @@ TUTOR_RUNTIME_MODE=mock npm run dev
 Live mode bridge controls:
 
 - `TUTOR_RUNTIME_LIVE_ENDPOINT`: HTTP endpoint for live runtime message execution (POST JSON).
+- `TUTOR_RUNTIME_LIVE_ORIGIN`: origin to present to the OpenClaw native gateway when using a `ws://` or `wss://` endpoint.
 - `TUTOR_RUNTIME_LIVE_TIMEOUT_MS`: per-attempt timeout in milliseconds (default `1500`).
 - `TUTOR_RUNTIME_LIVE_MAX_ATTEMPTS`: number of live bridge attempts before fallback (default `2`).
 - `TUTOR_RUNTIME_LIVE_RETRY_DELAY_MS`: delay between retries in milliseconds (default `150`).
