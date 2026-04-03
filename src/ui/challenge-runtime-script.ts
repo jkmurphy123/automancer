@@ -23,14 +23,14 @@ export function renderChallengeRuntimeScript(
       };
 
       const elements = {
-        challengeList: document.querySelector('[data-challenge-list]'),
+        challengeSelect: document.querySelector('[data-challenge-select]'),
+        challengeSelectStatus: document.querySelector('[data-challenge-select-status]'),
         activeId: document.querySelector('[data-active-id]'),
         activeTitle: document.querySelector('[data-active-title]'),
         activeSummary: document.querySelector('[data-active-summary]'),
         activeCategory: document.querySelector('[data-active-category]'),
         activeDifficulty: document.querySelector('[data-active-difficulty]'),
         activeDescription: document.querySelector('[data-active-description]'),
-        successCriteria: document.querySelector('[data-success-criteria]'),
         hintOutput: document.querySelector('[data-hint-output]'),
         hintButton: document.querySelector('[data-hint-button]'),
         hintProgress: document.querySelector('[data-hint-progress]'),
@@ -306,16 +306,6 @@ export function renderChallengeRuntimeScript(
         elements.lessonPanel.classList.add('hidden');
       };
 
-      const renderCriteria = (criteria) => {
-        elements.successCriteria.innerHTML = '';
-
-        criteria.forEach((criterion) => {
-          const item = document.createElement('li');
-          item.textContent = criterion;
-          elements.successCriteria.appendChild(item);
-        });
-      };
-
       const renderList = (target, values, emptyLabel) => {
         target.innerHTML = '';
 
@@ -370,28 +360,21 @@ export function renderChallengeRuntimeScript(
         );
       };
 
-      const renderListState = () => {
-        elements.challengeList
-          .querySelectorAll('button[data-challenge-id]')
-          .forEach((button) => {
-            const challengeId = button.getAttribute('data-challenge-id');
+      const renderSelectState = () => {
+        elements.challengeSelect
+          .querySelectorAll('option[data-challenge-id]')
+          .forEach((option) => {
+            const challengeId = option.getAttribute('data-challenge-id');
             const challenge = challengeId ? byId[challengeId] : undefined;
 
             if (!challenge) {
               return;
             }
 
-            const lockHint = button.querySelector('[data-lock-hint]');
             const challengeBlockedReason = blockedReason(challenge);
             const challengeIsUnlocked = challengeBlockedReason === null;
-            button.disabled = !challengeIsUnlocked;
-            button.classList.toggle('is-locked', !challengeIsUnlocked);
-            button.classList.toggle('is-active', challengeId === state.activeId && challengeIsUnlocked);
-            button.classList.toggle('is-complete', Boolean(state.completedById[challengeId]));
-
-            if (lockHint) {
-              lockHint.textContent = challengeBlockedReason ?? 'Unlocked';
-            }
+            option.disabled = !challengeIsUnlocked;
+            option.selected = challengeId === state.activeId;
           });
       };
 
@@ -412,36 +395,34 @@ export function renderChallengeRuntimeScript(
         elements.feedback.classList.remove('feedback-success', 'feedback-failed');
         elements.guidanceFailure.textContent = 'No failed attempts yet. Guidance will appear here if validation fails.';
         state.shownHints = 0;
-        renderCriteria(challenge.successCriteria);
         renderGuidance(challenge);
         renderProgress();
         setLessonVisible(false);
-        renderListState();
+        renderSelectState();
+        if (state.completedById[challenge.id]) {
+          elements.challengeSelectStatus.textContent = 'Completed';
+        } else {
+          elements.challengeSelectStatus.textContent = 'Unlocked';
+        }
         emitChallengeChanged();
         persistProfile();
       };
 
-      elements.challengeList.addEventListener('click', (event) => {
-        const button = event.target.closest('button[data-challenge-id]');
-
-        if (!button) {
-          return;
-        }
-
-        const challengeId = button.getAttribute('data-challenge-id');
+      elements.challengeSelect.addEventListener('change', () => {
+        const challengeId = String(elements.challengeSelect.value ?? '');
 
         if (!challengeId || !byId[challengeId]) {
           return;
         }
 
-        if (button.disabled) {
-          const challenge = byId[challengeId];
-          const reason = blockedReason(challenge);
-          if (reason) {
-            elements.feedback.textContent = reason;
-            elements.feedback.classList.remove('feedback-success');
-            elements.feedback.classList.add('feedback-failed');
-          }
+        const challenge = byId[challengeId];
+        const reason = blockedReason(challenge);
+        if (reason) {
+          elements.challengeSelect.value = state.activeId;
+          elements.challengeSelectStatus.textContent = reason;
+          elements.feedback.textContent = reason;
+          elements.feedback.classList.remove('feedback-success');
+          elements.feedback.classList.add('feedback-failed');
           return;
         }
 
@@ -485,7 +466,8 @@ export function renderChallengeRuntimeScript(
         elements.nextMission.textContent = challenge.completionLesson.nextMission;
         setLessonVisible(true);
         renderProgress();
-        renderListState();
+        renderSelectState();
+        elements.challengeSelectStatus.textContent = 'Completed';
         persistProfile();
       });
 

@@ -167,10 +167,10 @@ describe('renderAppShell runtime behaviors', () => {
 
     await flush();
 
-    const prerequisiteLockedButton = document.querySelector('button[data-challenge-id="T1-PLN-04"]') as
+    const prerequisiteLockedOption = document.querySelector('option[data-challenge-id="T1-PLN-04"]') as
       | (Element & { disabled: boolean })
       | null;
-    expect(prerequisiteLockedButton?.disabled).toBe(true);
+    expect(prerequisiteLockedOption?.disabled).toBe(true);
 
     const submissionInput = document.querySelector('[data-submission-input]') as (Element & { value: string }) | null;
     const submitButton = document.querySelector('[data-submit-button]') as (Element & { click: () => void }) | null;
@@ -190,7 +190,10 @@ describe('renderAppShell runtime behaviors', () => {
 
     expect(feedback?.textContent).toContain('Challenge completed. Keyword criteria satisfied.');
     expect(progressCompleted?.textContent).toContain('1/8');
-    expect(prerequisiteLockedButton?.disabled).toBe(false);
+    const prerequisiteUnlockedOption = document.querySelector('option[data-challenge-id="T1-PLN-04"]') as
+      | (Element & { disabled: boolean })
+      | null;
+    expect(prerequisiteUnlockedOption?.disabled).toBe(false);
 
     profileName!.value = 'Alex';
     profileSave!.click();

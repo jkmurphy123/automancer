@@ -8,7 +8,6 @@ import { resolveSkillRelevanceHint, type SkillMetadata, type SkillRailState } fr
 import type { TutorGuidanceCatalog } from '../tutor/guidance.js';
 import {
   buildCompletedIdSet,
-  challengeUnlockBlockedReason,
   computeUnlockedTier,
   isChallengeUnlocked,
 } from '../progress/progression.js';
@@ -82,7 +81,32 @@ const statusTone: Record<DockAgent['status'], string> = {
   blocked: 'tone-blocked',
 };
 
-function renderAgentDock(agents: DockAgent[]): string {
+function renderProfileProgressPanel(challengeCount: number): string {
+  return `
+    <section class="card guidance-panel profile-progress-card" data-profile-progress-panel>
+      <h3>Profile + Progress</h3>
+      <label class="skill-field">
+        <span class="meta">Display name</span>
+        <input class="input-control" type="text" data-profile-name maxlength="60" placeholder="Learner" />
+      </label>
+      <p class="controls-row">
+        <button class="button button-secondary" type="button" data-profile-save>Save Profile</button>
+        <span class="meta" data-profile-status>Profile not saved yet.</span>
+      </p>
+      <ul class="criteria">
+        <li data-progress-completed>Completed: 0/${challengeCount}</li>
+        <li data-progress-tier>Unlocked tier: TIER 1</li>
+        <li data-progress-concepts-count>Learned concepts: 0</li>
+      </ul>
+      <h4>Learned Concepts</h4>
+      <ul class="criteria" data-learned-concepts>
+        <li>Complete challenges to unlock concept summaries.</li>
+      </ul>
+    </section>
+  `;
+}
+
+function renderAgentDock(agents: DockAgent[], challengeCount: number): string {
   const selectedAgent = agents[0];
   if (selectedAgent === undefined) {
     throw new Error('At least one dock agent is required.');
@@ -157,32 +181,22 @@ function renderAgentDock(agents: DockAgent[]): string {
           </p>
         </form>
       </section>
+      ${renderProfileProgressPanel(challengeCount)}
     </section>
   `;
 }
 
-function renderChallengePicker(
+function renderChallengeOption(
   challenge: ChallengeDefinition,
   isActive: boolean,
   unlockedTier: number,
   completedIds: Set<string>,
 ): string {
   const isUnlocked = isChallengeUnlocked(challenge, unlockedTier, completedIds);
-  const activeClass = isActive && isUnlocked ? 'is-active' : '';
-  const lockedClass = isUnlocked ? '' : 'is-locked';
   const disabledAttribute = isUnlocked ? '' : 'disabled';
-  const lockLabel = challengeUnlockBlockedReason(challenge, unlockedTier, completedIds) ?? 'Unlocked';
+  const selectedAttribute = isActive ? 'selected' : '';
 
-  return `
-    <li>
-      <button class="challenge-picker ${activeClass} ${lockedClass}" type="button" data-challenge-id="${escapeHtml(challenge.id)}" ${disabledAttribute}>
-        <span class="badge tone-neutral">${escapeHtml(difficultyLabel(challenge.difficulty))}</span>
-        <strong>${escapeHtml(challenge.title)}</strong>
-        <span class="muted">${escapeHtml(challenge.category)}</span>
-        <span class="meta challenge-lock" data-lock-hint>${escapeHtml(lockLabel)}</span>
-      </button>
-    </li>
-  `;
+  return `<option value="${escapeHtml(challenge.id)}" data-challenge-id="${escapeHtml(challenge.id)}" ${selectedAttribute} ${disabledAttribute}>${escapeHtml(challenge.title)}</option>`;
 }
 
 function renderChallengeBoard(catalog: ChallengeCatalog): string {
@@ -198,11 +212,7 @@ function renderChallengeBoard(catalog: ChallengeCatalog): string {
   const completedIds = buildCompletedIdSet(initialProgress);
   const unlockedTier = computeUnlockedTier(catalog, completedIds);
   const challengeOptions = catalog.challenges
-    .map((challenge) => renderChallengePicker(challenge, challenge.id === activeChallenge.id, unlockedTier, completedIds))
-    .join('');
-
-  const criteria = activeChallenge.successCriteria
-    .map((criterion) => `<li>${escapeHtml(criterion)}</li>`)
+    .map((challenge) => renderChallengeOption(challenge, challenge.id === activeChallenge.id, unlockedTier, completedIds))
     .join('');
 
   return `
@@ -211,11 +221,15 @@ function renderChallengeBoard(catalog: ChallengeCatalog): string {
         <h2>Challenge Board</h2>
         <p>Data-driven Tier 1 + Tier 2 challenges with deterministic completion checks.</p>
       </header>
-      <div class="challenge-grid">
-        <aside class="card challenge-list-card">
-          <h3>Challenge List</h3>
-          <ul class="stack" data-challenge-list>${challengeOptions}</ul>
-        </aside>
+      <div class="challenge-stack">
+        <section class="card challenge-select-card">
+          <h3>Select Challenge</h3>
+          <label class="sr-only" for="challenge-picker">Challenge</label>
+          <select id="challenge-picker" class="input-control challenge-select" data-challenge-select>
+            ${challengeOptions}
+          </select>
+          <p class="meta challenge-select-status" data-challenge-select-status>Unlocked</p>
+        </section>
 
         <article class="card challenge-detail-card">
           <p class="eyebrow" data-active-id>${escapeHtml(activeChallenge.id)}</p>
@@ -225,11 +239,7 @@ function renderChallengeBoard(catalog: ChallengeCatalog): string {
             difficultyLabel(activeChallenge.difficulty),
           )}</span></p>
 
-          <h4>Full Description</h4>
           <p data-active-description>${escapeHtml(activeChallenge.fullDescription)}</p>
-
-          <h4>Success Criteria</h4>
-          <ul class="criteria" data-success-criteria>${criteria}</ul>
 
           <h4>Hints</h4>
           <p class="hint-output" data-hint-output>No hints revealed yet.</p>
@@ -268,26 +278,6 @@ function renderChallengeBoard(catalog: ChallengeCatalog): string {
             <p data-next-mission></p>
           </section>
 
-          <section class="guidance-panel">
-            <h4>Profile + Progress</h4>
-            <label class="skill-field">
-              <span class="meta">Display name</span>
-              <input class="input-control" type="text" data-profile-name maxlength="60" placeholder="Learner" />
-            </label>
-            <p class="controls-row">
-              <button class="button button-secondary" type="button" data-profile-save>Save Profile</button>
-              <span class="meta" data-profile-status>Profile not saved yet.</span>
-            </p>
-            <ul class="criteria">
-              <li data-progress-completed>Completed: 0/${catalog.challenges.length}</li>
-              <li data-progress-tier>Unlocked tier: TIER 1</li>
-              <li data-progress-concepts-count>Learned concepts: 0</li>
-            </ul>
-            <h4>Learned Concepts</h4>
-            <ul class="criteria" data-learned-concepts>
-              <li>Complete challenges to unlock concept summaries.</li>
-            </ul>
-          </section>
         </article>
       </div>
     </section>
@@ -687,50 +677,27 @@ function renderStyle(): string {
       font-size: 0.95rem;
     }
 
-    .challenge-grid {
+    .challenge-stack {
       display: grid;
-      grid-template-columns: minmax(13rem, 0.9fr) minmax(0, 1.4fr);
       gap: 0.8rem;
-      align-items: start;
     }
 
-    .challenge-picker {
-      width: 100%;
-      text-align: left;
-      border: 1px solid var(--panel-border);
-      background: #fff;
-      border-radius: 10px;
-      padding: 0.65rem;
+    .challenge-select-card {
       display: grid;
-      gap: 0.25rem;
-      cursor: pointer;
-      color: var(--text);
-      font: inherit;
+      gap: 0.5rem;
     }
 
-    .challenge-picker.is-active {
-      border-color: var(--neutral);
-      background: #f1f6ff;
+    .challenge-select {
+      font-size: 0.95rem;
     }
 
-    .challenge-picker.is-complete {
-      border-color: var(--ready);
-      background: #ecfaf5;
-    }
-
-    .challenge-picker.is-locked {
-      opacity: 0.72;
-      background: rgba(255, 255, 255, 0.65);
-      cursor: not-allowed;
+    .challenge-select-status {
+      margin-top: 0;
     }
 
     .challenge-title {
       margin-top: 0.4rem;
       font-size: 1.05rem;
-    }
-
-    .challenge-lock {
-      margin-top: 0.2rem;
     }
 
     .criteria {
@@ -917,15 +884,15 @@ function renderStyle(): string {
         grid-template-columns: 1fr;
       }
 
-      .challenge-grid {
-        grid-template-columns: 1fr;
+      .challenge-stack {
+        gap: 0.65rem;
       }
     }
   `;
 }
 
 export function renderAppShell(state: AppShellState): string {
-  const dock = renderAgentDock(state.agents);
+  const dock = renderAgentDock(state.agents, state.challengeCatalog.challenges.length);
   const board = renderChallengeBoard(state.challengeCatalog);
   const activeChallenge = state.challengeCatalog.byId[state.challengeCatalog.defaultChallengeId];
   if (activeChallenge === undefined) {
@@ -948,8 +915,8 @@ export function renderAppShell(state: AppShellState): string {
       ${systemMessages}
       <main class="app">
         ${dock}
-        ${board}
         ${chat}
+        ${board}
       </main>
     </div>
     <script>${renderChallengeRuntimeScript(state.challengeCatalog, state.tutorGuidance, state.lessonMap)}</script>
