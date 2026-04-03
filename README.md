@@ -32,6 +32,18 @@ Example:
 TUTOR_RUNTIME_MODE=mock npm run dev
 ```
 
+Live mode bridge controls:
+
+- `TUTOR_RUNTIME_LIVE_ENDPOINT`: HTTP endpoint for live runtime message execution (POST JSON).
+- `TUTOR_RUNTIME_LIVE_TIMEOUT_MS`: per-attempt timeout in milliseconds (default `1500`).
+- `TUTOR_RUNTIME_LIVE_MAX_ATTEMPTS`: number of live bridge attempts before fallback (default `2`).
+- `TUTOR_RUNTIME_LIVE_RETRY_DELAY_MS`: delay between retries in milliseconds (default `150`).
+
+Rollback path for live mode:
+
+- Set `TUTOR_RUNTIME_MODE=mock` to force deterministic local behavior.
+- Or unset `TUTOR_RUNTIME_LIVE_ENDPOINT` while keeping `TUTOR_RUNTIME_MODE=live`; live mode will degrade to deterministic fallback with system notes and runtime events preserved.
+
 ## Milestone 7 Scope
 
 The app now includes a runtime session bridge and observability wiring:

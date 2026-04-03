@@ -61,4 +61,25 @@ describe('RuntimeSessionBridge', () => {
     const events = bridge.getSessionEvents(session.id, 20);
     expect(events.some((event) => event.type === 'skill_failed')).toBe(true);
   });
+
+  it('evicts old messages and events when session caps are exceeded', async () => {
+    const bridge = new RuntimeSessionBridge([installedSkill], {
+      maxEventsPerSession: 4,
+      maxMessagesPerSession: 5,
+    });
+    const session = bridge.createSession('mock', []);
+
+    for (let i = 0; i < 4; i += 1) {
+      await bridge.sendMessage(session.id, 'tutor', `message-${i}`);
+    }
+
+    const persistedSession = bridge.getSession(session.id);
+    expect(persistedSession).toBeDefined();
+    expect(persistedSession?.messages.length).toBe(5);
+    expect(persistedSession?.messages.some((message) => message.text === 'message-0')).toBe(false);
+
+    const events = bridge.getSessionEvents(session.id, 20);
+    expect(events.length).toBe(4);
+    expect(events.every((event) => event.type !== 'session_started')).toBe(true);
+  });
 });
