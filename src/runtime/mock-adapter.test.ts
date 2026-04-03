@@ -24,6 +24,7 @@ describe('MockAgentRuntimeAdapter', () => {
       preset: tutor!,
       userMessage: makeUserMessage('organize this challenge'),
       conversation: [],
+      availableSkills: [],
     });
 
     expect(tutorReply.text).toContain('small step');
@@ -39,6 +40,7 @@ describe('MockAgentRuntimeAdapter', () => {
         preset: tutor!,
         userMessage: makeUserMessage('__mock_error__'),
         conversation: [],
+        availableSkills: [],
       }),
     ).rejects.toThrow('__mock_error__');
   });

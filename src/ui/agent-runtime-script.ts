@@ -590,7 +590,14 @@ export function renderAgentInteractionScript(
 
           renderMessages();
           await refreshRuntimeEvents();
-          setPending(false, 'Response received from ' + preset.name + ' via ' + runtimeMode.toUpperCase() + ' runtime.');
+          const runtimeSource = normalizeText(runtimeResponse.runtimeSource);
+          const usedLiveFallback = runtimeMode === 'live' && runtimeSource === 'live_fallback';
+          setPending(
+            false,
+            usedLiveFallback
+              ? 'Response received via LIVE fallback. Verify OpenClaw bridge connectivity.'
+              : 'Response received from ' + preset.name + ' via ' + runtimeMode.toUpperCase() + ' runtime.',
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown runtime failure.';
           pushSystemMessage('error', 'Runtime failed: ' + message);
@@ -634,6 +641,12 @@ export function renderAgentInteractionScript(
           const responseText = normalizeText(runtimeResponse?.responseText);
           if (responseText.length === 0) {
             throw new Error('empty response');
+          }
+          if (runtimeMode === 'live' && runtimeResponse.runtimeSource !== 'live_bridge') {
+            const note = normalizeText(runtimeResponse.systemNote);
+            throw new Error(
+              note.length > 0 ? 'live bridge unavailable (' + note + ')' : 'live bridge unavailable (fallback mode active)',
+            );
           }
 
           setDockTestStatus(agentId, 'Connected at ' + formatTime(new Date().toISOString()) + '.');

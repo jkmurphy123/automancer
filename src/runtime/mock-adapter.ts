@@ -18,6 +18,7 @@ function buildReply(request: RuntimeRequest): RuntimeResponse {
   return {
     text: `Start with one small step: ${request.userMessage.text}. Then verify against the challenge success criteria before moving on.`,
     systemNote: 'Tutor mode suggested a step-by-step coaching response.',
+    runtimeSource: 'mock',
   };
 }
 

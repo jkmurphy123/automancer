@@ -23,6 +23,7 @@ interface RuntimeMessageResponse {
   durationMs: number;
   responseText: string;
   systemNote?: string;
+  runtimeSource: 'mock' | 'live_bridge' | 'live_fallback';
 }
 
 interface RuntimeSkillResponse {
@@ -196,6 +197,7 @@ describe('runtime API contract', () => {
       requestId: expect.any(String),
       durationMs: expect.any(Number),
       responseText: expect.any(String),
+      runtimeSource: expect.any(String),
     });
 
     const invalidBodyResponse = await fetch(`${server.baseUrl}/api/runtime/sessions/${session.sessionId}/messages`, {

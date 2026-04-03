@@ -1,13 +1,19 @@
+import { randomUUID } from 'node:crypto';
+
 import type { AgentRuntimeAdapter, RuntimeRequest, RuntimeResponse } from './adapter.js';
 import { MockAgentRuntimeAdapter } from './mock-adapter.js';
 
 interface LiveRuntimeConfig {
   endpoint?: string;
+  token?: string;
+  password?: string;
+  sessionKey?: string;
   timeoutMs?: number;
   maxAttempts?: number;
   retryDelayMs?: number;
   latencyMs?: number;
   fetchImpl?: typeof fetch;
+  webSocketFactory?: (url: string) => GatewaySocket;
 }
 
 interface LiveRuntimeBridgeResponse {
@@ -19,6 +25,57 @@ interface BridgeDispatchResult {
   response: RuntimeResponse;
   usedFallback: boolean;
 }
+
+interface GatewaySocketMessageEvent {
+  data?: unknown;
+}
+
+interface GatewaySocketCloseEvent {
+  code?: number;
+  reason?: string;
+}
+
+interface GatewaySocket {
+  readonly readyState: number;
+  addEventListener(type: 'open', listener: () => void): void;
+  addEventListener(type: 'message', listener: (event: GatewaySocketMessageEvent) => void): void;
+  addEventListener(type: 'error', listener: () => void): void;
+  addEventListener(type: 'close', listener: (event: GatewaySocketCloseEvent) => void): void;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+}
+
+interface GatewayResponseFrame {
+  type?: unknown;
+  id?: unknown;
+  ok?: unknown;
+  payload?: unknown;
+  error?: {
+    code?: unknown;
+    message?: unknown;
+  };
+}
+
+interface GatewayEventFrame {
+  type?: unknown;
+  event?: unknown;
+  payload?: unknown;
+}
+
+interface GatewayChatEventPayload {
+  sessionKey?: unknown;
+  runId?: unknown;
+  state?: unknown;
+  message?: unknown;
+}
+
+const GATEWAY_CLIENT_SCOPES = [
+  'operator.admin',
+  'operator.read',
+  'operator.write',
+  'operator.approvals',
+  'operator.pairing',
+];
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
   if (!value) {
@@ -34,24 +91,86 @@ function parsePositiveInteger(value: string | undefined, fallback: number): numb
   return parsed;
 }
 
-function isLiveRuntimeBridgeResponse(value: unknown): value is LiveRuntimeBridgeResponse {
-  if (typeof value !== 'object' || value === null) {
-    return false;
+function isWebSocketEndpoint(endpoint: string): boolean {
+  return endpoint.startsWith('ws://') || endpoint.startsWith('wss://');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function extractMessageText(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
-  const candidate = value as { text?: unknown; systemNote?: unknown };
+  if (Array.isArray(value)) {
+    const text = value
+      .map((entry) => extractMessageText(entry))
+      .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+      .join('\n')
+      .trim();
 
-  if (typeof candidate.text !== 'string') {
-    return false;
+    return text.length > 0 ? text : null;
   }
 
-  return candidate.systemNote === undefined || typeof candidate.systemNote === 'string';
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const directKeys = ['text', 'responseText', 'message', 'content'];
+
+  for (const key of directKeys) {
+    const candidate = extractMessageText(value[key]);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  if (typeof value.type === 'string' && value.type === 'text' && typeof value.text === 'string') {
+    return value.text.trim();
+  }
+
+  return null;
+}
+
+function normalizeBridgeResponse(value: unknown): LiveRuntimeBridgeResponse | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const text = extractMessageText(value.text) ?? extractMessageText(value.responseText) ?? extractMessageText(value.message);
+
+  if (!text) {
+    return null;
+  }
+
+  const systemNote =
+    typeof value.systemNote === 'string'
+      ? value.systemNote
+      : typeof value.note === 'string'
+        ? value.note
+        : typeof value.status === 'string'
+          ? value.status
+          : undefined;
+
+  return {
+    text,
+    ...(systemNote ? { systemNote } : {}),
+  };
 }
 
 export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
   readonly mode = 'live' as const;
 
   private readonly endpoint: string | undefined;
+
+  private readonly token: string | undefined;
+
+  private readonly password: string | undefined;
+
+  private readonly sessionKey: string;
 
   private readonly timeoutMs: number;
 
@@ -61,14 +180,20 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
 
   private readonly fetchImpl: typeof fetch;
 
+  private readonly webSocketFactory: (url: string) => GatewaySocket;
+
   private readonly fallback: MockAgentRuntimeAdapter;
 
   public constructor(config: LiveRuntimeConfig = {}) {
     this.endpoint = config.endpoint ?? process.env.TUTOR_RUNTIME_LIVE_ENDPOINT;
+    this.token = config.token ?? process.env.TUTOR_RUNTIME_LIVE_TOKEN;
+    this.password = config.password ?? process.env.TUTOR_RUNTIME_LIVE_PASSWORD;
+    this.sessionKey = config.sessionKey ?? process.env.TUTOR_RUNTIME_LIVE_SESSION_KEY ?? 'main';
     this.timeoutMs = config.timeoutMs ?? parsePositiveInteger(process.env.TUTOR_RUNTIME_LIVE_TIMEOUT_MS, 1500);
     this.maxAttempts = config.maxAttempts ?? parsePositiveInteger(process.env.TUTOR_RUNTIME_LIVE_MAX_ATTEMPTS, 2);
     this.retryDelayMs = config.retryDelayMs ?? parsePositiveInteger(process.env.TUTOR_RUNTIME_LIVE_RETRY_DELAY_MS, 150);
     this.fetchImpl = config.fetchImpl ?? fetch;
+    this.webSocketFactory = config.webSocketFactory ?? ((url) => new WebSocket(url) as GatewaySocket);
     this.fallback = new MockAgentRuntimeAdapter({ latencyMs: config.latencyMs ?? 280 });
   }
 
@@ -77,6 +202,7 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
 
     return {
       ...response,
+      runtimeSource: 'live_fallback',
       systemNote: response.systemNote
         ? response.systemNote + ' ' + reason
         : reason,
@@ -103,36 +229,15 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
       }, this.timeoutMs);
 
       try {
-        const response = await this.fetchImpl(this.endpoint, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            presetId: request.preset.id,
-            presetName: request.preset.name,
-            userMessage: request.userMessage.text,
-            conversation: request.conversation.map((message) => ({
-              role: message.role,
-              text: message.text,
-              agentPresetId: message.agentPresetId,
-            })),
-          }),
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Live runtime bridge returned ${response.status}.`);
-        }
-
-        const payload = (await response.json()) as unknown;
-
-        if (!isLiveRuntimeBridgeResponse(payload)) {
-          throw new Error('Live runtime bridge returned an invalid payload shape.');
-        }
+        const payload = isWebSocketEndpoint(this.endpoint)
+          ? await this.sendThroughGatewaySocket(this.endpoint, request, controller.signal)
+          : await this.sendThroughHttpBridge(this.endpoint, request, controller.signal);
 
         return {
-          response: payload,
+          response: {
+            ...payload,
+            runtimeSource: 'live_bridge',
+          },
           usedFallback: false,
         };
       } catch (error) {
@@ -155,7 +260,285 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
         `Live runtime bridge unavailable after ${this.maxAttempts} attempt(s); using deterministic fallback (${lastErrorMessage}).`,
       ),
       usedFallback: true,
+      };
+  }
+
+  private buildBridgeRequestBody(request: RuntimeRequest): string {
+    return JSON.stringify({
+      presetId: request.preset.id,
+      presetName: request.preset.name,
+      presetDescription: request.preset.description,
+      personalityPrompt: request.preset.personalityPrompt,
+      teachingStyle: request.preset.teachingStyle,
+      recommendedSkills: request.preset.recommendedSkills,
+      availableSkills: request.availableSkills.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        displayName: skill.displayName,
+      })),
+      userMessage: request.userMessage.text,
+      conversation: request.conversation.map((message) => ({
+        role: message.role,
+        text: message.text,
+        agentPresetId: message.agentPresetId,
+      })),
+    });
+  }
+
+  private buildHttpHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
     };
+
+    const bearerValue = this.token?.trim() || this.password?.trim();
+    if (bearerValue) {
+      headers.authorization = `Bearer ${bearerValue}`;
+    }
+
+    return headers;
+  }
+
+  private async sendThroughHttpBridge(
+    endpoint: string,
+    request: RuntimeRequest,
+    signal: AbortSignal,
+  ): Promise<LiveRuntimeBridgeResponse> {
+    const response = await this.fetchImpl(endpoint, {
+      method: 'POST',
+      headers: this.buildHttpHeaders(),
+      body: this.buildBridgeRequestBody(request),
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Live runtime bridge returned ${response.status}.`);
+    }
+
+    const payload = normalizeBridgeResponse((await response.json()) as unknown);
+
+    if (!payload) {
+      throw new Error('Live runtime bridge returned an invalid payload shape.');
+    }
+
+    return payload;
+  }
+
+  private async sendThroughGatewaySocket(
+    endpoint: string,
+    request: RuntimeRequest,
+    signal: AbortSignal,
+  ): Promise<LiveRuntimeBridgeResponse> {
+    const socket = this.webSocketFactory(endpoint);
+    const pending = new Map<
+      string,
+      {
+        resolve: (value: unknown) => void;
+        reject: (error: Error) => void;
+      }
+    >();
+    const runId = randomUUID();
+    let streamedText = '';
+    let settled = false;
+
+    const cleanup = (closeCode?: number, closeReason?: string): void => {
+      if (socket.readyState < 2) {
+        socket.close(closeCode, closeReason);
+      }
+    };
+
+    const rejectPending = (error: Error): void => {
+      for (const entry of pending.values()) {
+        entry.reject(error);
+      }
+
+      pending.clear();
+    };
+
+    const gatewayRequest = async <T>(method: string, params: unknown): Promise<T> =>
+      await new Promise<T>((resolve, reject) => {
+        if (settled) {
+          reject(new Error('Gateway socket already settled.'));
+          return;
+        }
+
+        const id = randomUUID();
+        pending.set(id, {
+          resolve: (value) => {
+            resolve(value as T);
+          },
+          reject,
+        });
+
+        socket.send(
+          JSON.stringify({
+            type: 'req',
+            id,
+            method,
+            params,
+          }),
+        );
+      });
+
+    return await new Promise<LiveRuntimeBridgeResponse>((resolve, reject) => {
+      const settleSuccess = (value: LiveRuntimeBridgeResponse): void => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        rejectPending(new Error('Gateway socket request completed.'));
+        cleanup(1000, 'completed');
+        resolve(value);
+      };
+
+      const settleFailure = (error: Error): void => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        rejectPending(error);
+        cleanup(4008, 'failed');
+        reject(error);
+      };
+
+      signal.addEventListener('abort', () => {
+        settleFailure(new Error('Live runtime bridge request timed out.'));
+      });
+
+      socket.addEventListener('open', () => {
+        void (async () => {
+          try {
+            await gatewayRequest('connect', {
+              minProtocol: 3,
+              maxProtocol: 3,
+              client: {
+                id: 'openclaw-tutor-ui',
+                version: '0.1.0',
+                platform: 'node',
+                mode: 'webchat',
+              },
+              role: 'operator',
+              scopes: GATEWAY_CLIENT_SCOPES,
+              caps: ['tool-events'],
+              ...(this.token?.trim() || this.password?.trim()
+                ? {
+                    auth: {
+                      ...(this.token?.trim() ? { token: this.token.trim() } : {}),
+                      ...(this.password?.trim() ? { password: this.password.trim() } : {}),
+                    },
+                  }
+                : {}),
+              userAgent: 'automancer-live-adapter',
+              locale: 'en-US',
+            });
+
+            await gatewayRequest('chat.send', {
+              sessionKey: this.sessionKey,
+              message: request.userMessage.text,
+              deliver: false,
+              idempotencyKey: runId,
+            });
+          } catch (error) {
+            settleFailure(error instanceof Error ? error : new Error('Gateway connect failed.'));
+          }
+        })();
+      });
+
+      socket.addEventListener('message', (event) => {
+        if (settled) {
+          return;
+        }
+
+        let parsed: unknown;
+
+        try {
+          parsed = JSON.parse(String(event.data ?? ''));
+        } catch {
+          return;
+        }
+
+        const responseFrame = parsed as GatewayResponseFrame;
+        if (responseFrame.type === 'res' && typeof responseFrame.id === 'string') {
+          const entry = pending.get(responseFrame.id);
+          if (!entry) {
+            return;
+          }
+
+          pending.delete(responseFrame.id);
+
+          if (responseFrame.ok) {
+            entry.resolve(responseFrame.payload);
+          } else {
+            const message =
+              typeof responseFrame.error?.message === 'string'
+                ? responseFrame.error.message
+                : 'Gateway request failed.';
+            entry.reject(new Error(message));
+          }
+
+          return;
+        }
+
+        const eventFrame = parsed as GatewayEventFrame;
+        if (eventFrame.type !== 'event' || eventFrame.event !== 'chat' || !isRecord(eventFrame.payload)) {
+          return;
+        }
+
+        const payload = eventFrame.payload as GatewayChatEventPayload;
+        const payloadSessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey : null;
+        const payloadRunId = typeof payload.runId === 'string' ? payload.runId : null;
+        const payloadState = typeof payload.state === 'string' ? payload.state : null;
+
+        if (payloadSessionKey !== this.sessionKey) {
+          return;
+        }
+
+        if (payloadRunId && payloadRunId !== runId) {
+          return;
+        }
+
+        if (payloadState === 'delta') {
+          const nextChunk = extractMessageText(payload.message);
+          if (nextChunk) {
+            streamedText = nextChunk;
+          }
+          return;
+        }
+
+        if (payloadState === 'final') {
+          const text = extractMessageText(payload.message) ?? streamedText.trim();
+          if (!text) {
+            settleFailure(new Error('Gateway chat completed without a text response.'));
+            return;
+          }
+
+          settleSuccess({
+            text,
+            systemNote: `OpenClaw gateway session ${this.sessionKey}.`,
+          });
+          return;
+        }
+
+        if (payloadState === 'aborted') {
+          settleFailure(new Error('Gateway chat run was aborted.'));
+        }
+      });
+
+      socket.addEventListener('error', () => {
+        settleFailure(new Error('Gateway socket error.'));
+      });
+
+      socket.addEventListener('close', (event) => {
+        if (settled) {
+          return;
+        }
+
+        const reason = typeof event.reason === 'string' && event.reason.length > 0 ? event.reason : 'no reason';
+        const code = typeof event.code === 'number' ? event.code : 1006;
+        settleFailure(new Error(`Gateway closed (${code}): ${reason}`));
+      });
+    });
   }
 
   public async sendMessage(request: RuntimeRequest): Promise<RuntimeResponse> {

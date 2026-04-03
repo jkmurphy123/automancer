@@ -35,6 +35,7 @@ export interface RuntimeMessageResult {
   durationMs: number;
   responseText: string;
   systemNote?: string;
+  runtimeSource: 'mock' | 'live_bridge' | 'live_fallback';
 }
 
 export interface RuntimeSkillExecutionResult {
@@ -149,6 +150,13 @@ export class RuntimeSessionBridge {
         preset,
         userMessage,
         conversation: session.messages,
+        availableSkills: this.skills.map((skill) => ({
+          id: skill.id,
+          name: skill.name,
+          displayName: skill.displayName,
+          installed: skill.installed,
+          enabled: skill.enabled,
+        })),
       });
 
       const agentMessage = createChatMessage({
@@ -197,6 +205,7 @@ export class RuntimeSessionBridge {
         requestId,
         durationMs,
         responseText: response.text,
+        runtimeSource: response.runtimeSource,
         ...(response.systemNote ? { systemNote: response.systemNote } : {}),
       };
     } catch (error) {
