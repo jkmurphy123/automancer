@@ -12,7 +12,7 @@ import {
   computeUnlockedTier,
   isChallengeUnlocked,
 } from '../progress/progression.js';
-import { renderAgentInteractionScript } from './agent-runtime-script.js';
+import { renderAgentInteractionScript, type SystemMessage } from './agent-runtime-script.js';
 import { renderChallengeRuntimeScript } from './challenge-runtime-script.js';
 import { escapeHtml } from './escape.js';
 
@@ -27,6 +27,55 @@ export interface AppShellState {
   runtimeBridgeBasePath: string;
 }
 
+function buildInitialSystemMessages(chatSession: ChatSessionConfig): SystemMessage[] {
+  if (chatSession.runtimeMode === 'live') {
+    return [
+      {
+        id: 'runtime-mode-live',
+        type: 'confirmation',
+        text: 'App running in LIVE mode.',
+      },
+    ];
+  }
+
+  return [
+    {
+      id: 'runtime-mode-mock',
+      type: 'warning',
+      text: 'App running in MOCK mode (simulated runtime responses).',
+    },
+  ];
+}
+
+function renderSystemMessages(messages: SystemMessage[]): string {
+  const items = messages
+    .map(
+      (message) => `
+      <li class="system-message system-message-${escapeHtml(message.type)}" data-system-message-id="${escapeHtml(message.id)}">
+        <p class="system-message-text">${escapeHtml(message.text)}</p>
+        <button
+          class="system-message-close"
+          type="button"
+          data-system-message-close
+          data-system-message-id="${escapeHtml(message.id)}"
+          aria-label="Dismiss system message"
+        >
+          X
+        </button>
+      </li>
+    `,
+    )
+    .join('');
+
+  return `
+    <section class="system-message-panel" aria-label="System messages">
+      <ul class="system-message-stack" data-system-messages>
+        ${items}
+      </ul>
+    </section>
+  `;
+}
+
 const statusTone: Record<DockAgent['status'], string> = {
   ready: 'tone-ready',
   working: 'tone-working',
@@ -34,18 +83,47 @@ const statusTone: Record<DockAgent['status'], string> = {
 };
 
 function renderAgentDock(agents: DockAgent[]): string {
+  const selectedAgent = agents[0];
+  if (selectedAgent === undefined) {
+    throw new Error('At least one dock agent is required.');
+  }
+
   const cards = agents
     .map(
       (agent) => `
-      <article class="card dock-card">
+      <article class="card dock-card ${agent.id === selectedAgent.id ? 'is-selected' : ''}" data-dock-card data-agent-id="${escapeHtml(agent.id)}" role="button" tabindex="0" aria-pressed="${agent.id === selectedAgent.id ? 'true' : 'false'}">
         <header class="row-between">
-          <h3>${escapeHtml(agent.name)}</h3>
-          <span class="badge ${statusTone[agent.status]}">${escapeHtml(agent.status)}</span>
+          <h3 data-agent-name>${escapeHtml(agent.name)}</h3>
+          <span class="badge ${statusTone[agent.status]}" data-agent-status>${escapeHtml(agent.status)}</span>
         </header>
-        <p class="muted">${escapeHtml(agent.specialty)}</p>
-        <p class="meta">Queue depth: ${agent.queueDepth}</p>
+        <p class="controls-row">
+          <button class="button button-secondary" type="button" data-agent-test>Test</button>
+          <span class="meta" data-agent-test-status>Not tested yet.</span>
+        </p>
+        <p class="muted" data-agent-specialty>${escapeHtml(agent.specialty)}</p>
+        <p class="meta">Queue depth: <span data-agent-queue-depth>${agent.queueDepth}</span></p>
       </article>
     `,
+    )
+    .join('');
+
+  const internalAttributeRows = [
+    { label: 'Agent ID', key: 'id', value: selectedAgent.id },
+    { label: 'Status', key: 'status', value: selectedAgent.status },
+    { label: 'Queue depth', key: 'queueDepth', value: String(selectedAgent.queueDepth) },
+    { label: 'Avatar', key: 'avatar', value: selectedAgent.avatar },
+    { label: 'Teaching style', key: 'teachingStyle', value: selectedAgent.teachingStyle },
+    { label: 'Challenge bias', key: 'challengeBias', value: selectedAgent.challengeBias },
+    { label: 'Recommended skills', key: 'recommendedSkills', value: selectedAgent.recommendedSkills.join(', ') || 'none' },
+  ];
+  const internalAttributes = internalAttributeRows
+    .map(
+      (row) => `
+        <li class="attribute-row">
+          <span class="meta">${escapeHtml(row.label)}</span>
+          <strong data-agent-internal-value="${escapeHtml(row.key)}">${escapeHtml(row.value)}</strong>
+        </li>
+      `,
     )
     .join('');
 
@@ -56,6 +134,29 @@ function renderAgentDock(agents: DockAgent[]): string {
         <p>Live fixture lane for agent status context.</p>
       </header>
       <div class="stack">${cards}</div>
+      <section class="card dock-attributes" data-agent-attributes>
+        <h3>Agent Parameters</h3>
+        <p class="meta">Editable text fields sync to the selected Agent Dock card when you save.</p>
+        <ul class="attribute-list">${internalAttributes}</ul>
+        <form class="stack" data-agent-form>
+          <label class="skill-field">
+            <span class="meta">Name</span>
+            <input class="input-control" type="text" name="name" data-agent-field="name" value="${escapeHtml(selectedAgent.name)}" />
+          </label>
+          <label class="skill-field">
+            <span class="meta">Description</span>
+            <textarea class="submission-box skill-textarea" name="description" data-agent-field="description" rows="3">${escapeHtml(selectedAgent.description)}</textarea>
+          </label>
+          <label class="skill-field">
+            <span class="meta">Specialty</span>
+            <input class="input-control" type="text" name="specialty" data-agent-field="specialty" value="${escapeHtml(selectedAgent.specialty)}" />
+          </label>
+          <p class="controls-row">
+            <button class="button button-secondary" type="button" data-agent-save>Save</button>
+            <span class="meta" data-agent-save-status>Select an agent and save edits.</span>
+          </p>
+        </form>
+      </section>
     </section>
   `;
 }
@@ -375,8 +476,73 @@ function renderStyle(): string {
       gap: 1rem;
       grid-template-columns: minmax(14rem, 0.95fr) minmax(24rem, 1.65fr) minmax(16rem, 1fr);
       align-items: start;
+    }
+
+    .app-shell {
       max-width: 1400px;
       margin: 0 auto;
+      display: grid;
+      gap: 1rem;
+    }
+
+    .system-message-panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      padding: 0.75rem;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(4px);
+    }
+
+    .system-message-stack {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 0.5rem;
+    }
+
+    .system-message {
+      border: 2px solid var(--neutral);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.92);
+      padding: 0.55rem 0.65rem;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.6rem;
+    }
+
+    .system-message-confirmation {
+      border-color: #0f8f6f;
+    }
+
+    .system-message-warning {
+      border-color: #b46900;
+    }
+
+    .system-message-error {
+      border-color: #ad2f45;
+    }
+
+    .system-message-text {
+      margin: 0;
+      font-size: 0.88rem;
+      line-height: 1.35;
+    }
+
+    .system-message-close {
+      border: 1px solid var(--panel-border);
+      border-radius: 999px;
+      width: 1.55rem;
+      height: 1.55rem;
+      background: rgba(255, 255, 255, 0.9);
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      line-height: 1;
+      flex: 0 0 auto;
     }
 
     .panel {
@@ -420,6 +586,49 @@ function renderStyle(): string {
       border-radius: 12px;
       padding: 0.75rem;
       background: rgba(255, 255, 255, 0.9);
+    }
+
+    .dock-card {
+      cursor: pointer;
+      transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+    }
+
+    .dock-card:hover {
+      border-color: rgba(62, 79, 106, 0.35);
+      transform: translateY(-1px);
+    }
+
+    .dock-card.is-selected {
+      border-color: rgba(62, 79, 106, 0.55);
+      box-shadow: inset 0 0 0 1px rgba(62, 79, 106, 0.28);
+      background: #f2f7ff;
+    }
+
+    .dock-attributes {
+      margin-top: 0.75rem;
+      border-style: dashed;
+      background: rgba(255, 255, 255, 0.94);
+    }
+
+    .attribute-list {
+      margin: 0.6rem 0 0.4rem;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 0.35rem;
+    }
+
+    .attribute-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.6rem;
+      align-items: center;
+    }
+
+    .attribute-row strong {
+      font-size: 0.85rem;
+      text-align: right;
+      word-break: break-word;
     }
 
     .row-between {
@@ -715,6 +924,8 @@ export function renderAppShell(state: AppShellState): string {
     throw new Error(`Challenge ${state.challengeCatalog.defaultChallengeId} was not found in catalog.`);
   }
   const chat = renderChatAndSkills(state.chatSession, state.agentPresets, state.skillRail, activeChallenge);
+  const initialSystemMessages = buildInitialSystemMessages(state.chatSession);
+  const systemMessages = renderSystemMessages(initialSystemMessages);
 
   return `<!doctype html>
 <html lang="en">
@@ -725,13 +936,23 @@ export function renderAppShell(state: AppShellState): string {
     <style>${renderStyle()}</style>
   </head>
   <body>
-    <main class="app" data-module="ui">
-      ${dock}
-      ${board}
-      ${chat}
-    </main>
+    <div class="app-shell" data-module="ui">
+      ${systemMessages}
+      <main class="app">
+        ${dock}
+        ${board}
+        ${chat}
+      </main>
+    </div>
     <script>${renderChallengeRuntimeScript(state.challengeCatalog, state.tutorGuidance, state.lessonMap)}</script>
-    <script>${renderAgentInteractionScript(state.chatSession, state.agentPresets, state.skillRail, state.runtimeBridgeBasePath)}</script>
+    <script>${renderAgentInteractionScript(
+      state.chatSession,
+      state.agentPresets,
+      state.skillRail,
+      state.runtimeBridgeBasePath,
+      state.agents,
+      initialSystemMessages,
+    )}</script>
   </body>
 </html>`;
 }

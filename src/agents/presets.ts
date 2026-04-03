@@ -1,3 +1,5 @@
+import { configuredAgents } from './config.js';
+
 export interface AgentPreset {
   id: string;
   name: string;
@@ -10,46 +12,25 @@ export interface AgentPreset {
   uiThemeAccent?: string;
 }
 
-export const agentPresets: AgentPreset[] = [
-  {
-    id: 'tutor',
-    name: 'Tutor',
-    avatar: 'compass',
-    description: 'Beginner-friendly coach that explains reasoning clearly.',
-    personalityPrompt:
-      'Guide the learner with short steps, explain tradeoffs, and suggest one concrete next action.',
-    teachingStyle: 'explanatory',
-    recommendedSkills: ['challenge-planning', 'lesson-synthesis'],
-    challengeBias: 'beginner',
-    uiThemeAccent: '#0f8f6f',
-  },
-  {
-    id: 'researcher',
-    name: 'Researcher',
-    avatar: 'search',
-    description: 'Finds facts quickly and summarizes evidence.',
-    personalityPrompt:
-      'Prioritize factual grounding, concise evidence summaries, and highlight unknowns explicitly.',
-    teachingStyle: 'evidence-first',
-    recommendedSkills: ['repo-search', 'source-comparison'],
-    challengeBias: 'analysis',
-    uiThemeAccent: '#2d6cdf',
-  },
-  {
-    id: 'mechanic',
-    name: 'Mechanic',
-    avatar: 'wrench',
-    description: 'Debug-focused assistant for implementation blockers.',
-    personalityPrompt:
-      'Focus on root-cause diagnosis, reproduction steps, and safe fixes with verification guidance.',
-    teachingStyle: 'debugging',
-    recommendedSkills: ['trace-investigation', 'qa-handoff'],
-    challengeBias: 'implementation',
-    uiThemeAccent: '#b46900',
-  },
-];
+export const agentPresets: AgentPreset[] = configuredAgents.map((agent) => ({
+  id: agent.id,
+  name: agent.name,
+  avatar: agent.avatar,
+  description: agent.description,
+  personalityPrompt: agent.personalityPrompt,
+  teachingStyle: agent.teachingStyle,
+  recommendedSkills: [...agent.recommendedSkills],
+  challengeBias: agent.challengeBias,
+  ...(agent.uiThemeAccent ? { uiThemeAccent: agent.uiThemeAccent } : {}),
+}));
 
-export const defaultAgentPresetId = 'tutor';
+const defaultPreset = configuredAgents.find((agent) => agent.isDefault) ?? configuredAgents[0];
+
+if (!defaultPreset) {
+  throw new Error('At least one configured agent is required.');
+}
+
+export const defaultAgentPresetId = defaultPreset.id;
 
 export function getAgentPresetById(id: string): AgentPreset | undefined {
   return agentPresets.find((preset) => preset.id === id);

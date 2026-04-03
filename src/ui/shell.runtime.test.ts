@@ -105,6 +105,60 @@ afterEach(() => {
 });
 
 describe('renderAppShell runtime behaviors', () => {
+  it('shows initial runtime mode system message and allows dismissing it', async () => {
+    const { dom } = createDom();
+    const { document } = dom.window;
+
+    await flush();
+
+    const systemMessages = document.querySelector('[data-system-messages]');
+    const closeButton = document.querySelector('[data-system-message-close]') as (Element & { click: () => void }) | null;
+
+    expect(systemMessages?.textContent).toContain('App running in MOCK mode');
+    expect(closeButton).toBeTruthy();
+
+    closeButton!.click();
+    await flush();
+
+    expect(systemMessages?.textContent?.trim()).toBe('');
+  });
+
+  it('switches selected dock agent and saves editable agent fields', async () => {
+    const { dom } = createDom();
+    const { document } = dom.window;
+
+    await flush();
+
+    const dockCard = document.querySelector('[data-dock-card][data-agent-id="agent-01"]') as
+      | (Element & { click: () => void })
+      | null;
+    const nameField = document.querySelector('[data-agent-field="name"]') as (Element & { value: string }) | null;
+    const descriptionField = document.querySelector('[data-agent-field="description"]') as (Element & { value: string }) | null;
+    const specialtyField = document.querySelector('[data-agent-field="specialty"]') as (Element & { value: string }) | null;
+    const saveButton = document.querySelector('[data-agent-save]') as (Element & { click: () => void }) | null;
+
+    expect(dockCard).toBeTruthy();
+    expect(nameField).toBeTruthy();
+    expect(descriptionField).toBeTruthy();
+    expect(specialtyField).toBeTruthy();
+    expect(saveButton).toBeTruthy();
+
+    dockCard!.click();
+    nameField!.value = 'Workflow Coach';
+    descriptionField!.value = 'Coordinates practical next steps.';
+    specialtyField!.value = 'Execution planning';
+    saveButton!.click();
+
+    expect((document.querySelector('[data-agent-name]') as { textContent?: string } | null)?.textContent).toContain('Workflow Coach');
+    expect((document.querySelector('[data-agent-specialty]') as { textContent?: string } | null)?.textContent).toContain(
+      'Execution planning',
+    );
+    expect((document.querySelector('[data-agent-field="description"]') as { value?: string } | null)?.value).toContain(
+      'Coordinates practical next steps.',
+    );
+    expect(document.querySelector('[data-agent-save-status]')?.textContent).toContain('Saved changes for Workflow Coach.');
+  });
+
   it('progresses challenge completion, unlocks prerequisite challenge, and restores profile state', async () => {
     const { dom } = createDom();
     const { document, localStorage } = dom.window;
@@ -225,5 +279,28 @@ describe('renderAppShell runtime behaviors', () => {
     expect(activity?.textContent).toContain('Plan created');
     expect(thread?.textContent).toContain('Plan Writer result');
     expect(status?.textContent).toContain('completed');
+  });
+
+  it('runs an agent dock connection test and reports connected status', async () => {
+    const { calls, dom } = createDom();
+    const { document } = dom.window;
+
+    await flush();
+
+    const testButton = document.querySelector('[data-dock-card][data-agent-id="agent-01"] [data-agent-test]') as
+      | (Element & { click: () => void })
+      | null;
+    const testStatus = document.querySelector('[data-dock-card][data-agent-id="agent-01"] [data-agent-test-status]');
+
+    expect(testButton).toBeTruthy();
+    expect(testStatus?.textContent).toContain('Not tested yet.');
+
+    testButton!.click();
+
+    await flush();
+    await flush();
+
+    expect(calls.filter((entry) => entry === 'POST /api/runtime/sessions/session-1/messages').length).toBeGreaterThan(0);
+    expect(testStatus?.textContent).toContain('Connected at');
   });
 });

@@ -14,13 +14,11 @@ function makeUserMessage(text: string): ChatMessage {
 }
 
 describe('MockAgentRuntimeAdapter', () => {
-  it('returns deterministic per-preset behavior', async () => {
+  it('returns deterministic tutor behavior', async () => {
     const adapter = new MockAgentRuntimeAdapter({ latencyMs: 0 });
     const tutor = getAgentPresetById('tutor');
-    const researcher = getAgentPresetById('researcher');
 
     expect(tutor).toBeDefined();
-    expect(researcher).toBeDefined();
 
     const tutorReply = await adapter.sendMessage({
       preset: tutor!,
@@ -28,15 +26,8 @@ describe('MockAgentRuntimeAdapter', () => {
       conversation: [],
     });
 
-    const researcherReply = await adapter.sendMessage({
-      preset: researcher!,
-      userMessage: makeUserMessage('organize this challenge'),
-      conversation: [],
-    });
-
     expect(tutorReply.text).toContain('small step');
-    expect(researcherReply.text).toContain('Evidence-first summary');
-    expect(tutorReply.text).not.toEqual(researcherReply.text);
+    expect(tutorReply.systemNote).toContain('Tutor mode');
   });
 
   it('surfaces predictable error for failure state testing', async () => {

@@ -7,7 +7,7 @@ describe('getSampleAppState', () => {
     const state = getSampleAppState();
 
     expect(state.agents.length).toBeGreaterThan(0);
-    expect(state.agentPresets.length).toBeGreaterThanOrEqual(2);
+    expect(state.agentPresets.length).toBe(1);
     expect(state.challengeCatalog.challenges.length).toBeGreaterThanOrEqual(8);
     expect(state.challengeCatalog.byId[state.challengeCatalog.defaultChallengeId]).toBeDefined();
     expect(state.chatSession.initialMessages.length).toBeGreaterThan(0);
@@ -28,6 +28,7 @@ describe('renderAppShellHtml', () => {
     const html = renderAppShellHtml();
 
     expect(html).toContain('Agent Dock');
+    expect(html).toContain('Agent Parameters');
     expect(html).toContain('Chat + Skills');
     expect(html).toContain('Challenge Board');
     expect(html).toContain('Send Message');
@@ -41,6 +42,8 @@ describe('renderAppShellHtml', () => {
     expect(html).toContain('Suggested skills');
     expect(html).toContain('data-module="ui"');
     expect(html).toContain('data-module="agents"');
+    expect(html).toContain('data-agent-save');
+    expect(html).toContain('data-agent-test');
     expect(html).toContain('data-module="challenges"');
     expect(html).toContain('data-module="skills"');
     expect(html).toContain('Reveal Next Hint');

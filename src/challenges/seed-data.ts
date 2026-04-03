@@ -54,11 +54,11 @@ export const seededChallenges: ChallengeDefinition[] = [
       'Only one agent has a blocked status badge.',
       'Include both the name and specialty in one sentence.',
     ],
-    successCriteria: ['Must identify Verifier as blocked.', 'Must mention QA and regression checks.'],
+    successCriteria: ['Must identify Tutor as blocked.', 'Must mention step-by-step coaching.'],
     validation: {
       type: 'keyword',
       mode: 'all',
-      keywords: ['verifier', 'qa', 'regression'],
+      keywords: ['tutor', 'step-by-step', 'coaching'],
     },
     completionLesson: {
       whatYouLearned: 'Grounding responses in observed UI data prevents hallucination.',
