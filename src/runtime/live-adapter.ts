@@ -104,7 +104,7 @@ function summarizeValueShape(value: unknown): string {
   return 'object{' + Object.keys(value).slice(0, 6).join(',') + '}';
 }
 
-function extractLatestAssistantTextFromHistory(value: unknown): string | null {
+function extractAssistantTextFromHistoryForPrompt(value: unknown, promptText: string): string | null {
   if (!isRecord(value)) {
     return null;
   }
@@ -116,9 +116,41 @@ function extractLatestAssistantTextFromHistory(value: unknown): string | null {
     return null;
   }
 
+  const normalizedPrompt = promptText.trim();
+  if (normalizedPrompt.length === 0) {
+    return null;
+  }
+
+  let matchedUserIndex = -1;
+
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (!isRecord(message) || message.role !== 'assistant') {
+    if (!isRecord(message) || message.role !== 'user') {
+      continue;
+    }
+
+    const text = extractMessageText(message.content);
+    if (text?.trim() === normalizedPrompt) {
+      matchedUserIndex = index;
+      break;
+    }
+  }
+
+  if (matchedUserIndex < 0) {
+    return null;
+  }
+
+  for (let index = matchedUserIndex + 1; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (!isRecord(message)) {
+      continue;
+    }
+
+    if (message.role === 'user') {
+      return null;
+    }
+
+    if (message.role !== 'assistant') {
       continue;
     }
 
@@ -465,6 +497,29 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
         );
       });
 
+      const readHistoryResponseText = async (): Promise<string | null> => {
+        const targetSessionKey = observedSessionKey ?? this.sessionKey;
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const history = await gatewayRequest('chat.history', {
+            sessionKey: targetSessionKey,
+            limit: 12,
+          });
+          const historyText = extractAssistantTextFromHistoryForPrompt(history, request.userMessage.text);
+          if (historyText) {
+            return historyText;
+          }
+
+          if (attempt < 2) {
+            await new Promise<void>((resolve) => {
+              setTimeout(resolve, 75);
+            });
+          }
+        }
+
+        return null;
+      };
+
     return await new Promise<LiveRuntimeBridgeResponse>((resolve, reject) => {
       const settleSuccess = (value: LiveRuntimeBridgeResponse): void => {
         if (settled) {
@@ -633,11 +688,7 @@ export class LiveAgentRuntimeAdapter implements AgentRuntimeAdapter {
           if (!text) {
             void (async () => {
               try {
-                const history = await gatewayRequest('chat.history', {
-                  sessionKey: observedSessionKey ?? this.sessionKey,
-                  limit: 10,
-                });
-                const historyText = extractLatestAssistantTextFromHistory(history);
+                const historyText = await readHistoryResponseText();
                 if (historyText) {
                   const sessionNote = `OpenClaw gateway session ${this.sessionKey}.`;
                   settleSuccess({

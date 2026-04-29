@@ -702,6 +702,33 @@ describe('LiveAgentRuntimeAdapter', () => {
             payload: {
               messages: [
                 {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: 'older prompt',
+                    },
+                  ],
+                },
+                {
+                  role: 'assistant',
+                  content: [
+                    {
+                      type: 'text',
+                      text: 'older response',
+                    },
+                  ],
+                },
+                {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: 'what should I do next?',
+                    },
+                  ],
+                },
+                {
                   role: 'assistant',
                   content: [
                     {
@@ -741,6 +768,130 @@ describe('LiveAgentRuntimeAdapter', () => {
     expect(result.text).toBe('history fallback response');
     expect(result.runtimeSource).toBe('live_bridge');
     expect(socket.sentFrames.some((frame) => frame.includes('"method":"chat.history"'))).toBe(true);
+  });
+
+  it('waits for the matching assistant reply instead of returning the previous history turn', async () => {
+    const socket = new FakeGatewaySocket();
+    let historyRequestCount = 0;
+    socket.send = function send(data: string): void {
+      this.sentFrames.push(data);
+
+      const frame = JSON.parse(data) as { id?: string; method?: string; params?: { idempotencyKey?: string } };
+      if (!frame.id || !frame.method) {
+        return;
+      }
+
+      if (frame.method === 'connect') {
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'res',
+            id: frame.id,
+            ok: true,
+            payload: {
+              type: 'hello-ok',
+            },
+          }),
+        });
+        return;
+      }
+
+      if (frame.method === 'chat.send') {
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'res',
+            id: frame.id,
+            ok: true,
+            payload: {
+              runId: frame.params?.idempotencyKey,
+              status: 'started',
+            },
+          }),
+        });
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'event',
+            event: 'chat',
+            payload: {
+              runId: frame.params?.idempotencyKey,
+              sessionKey: 'agent:main:main',
+              state: 'final',
+            },
+          }),
+        });
+        return;
+      }
+
+      if (frame.method === 'chat.history') {
+        historyRequestCount += 1;
+        const messages =
+          historyRequestCount === 1
+            ? [
+                {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'older prompt' }],
+                },
+                {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'older response' }],
+                },
+                {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'what should I do next?' }],
+                },
+              ]
+            : [
+                {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'older prompt' }],
+                },
+                {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'older response' }],
+                },
+                {
+                  role: 'user',
+                  content: [{ type: 'text', text: 'what should I do next?' }],
+                },
+                {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: 'current response' }],
+                },
+              ];
+
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'res',
+            id: frame.id,
+            ok: true,
+            payload: { messages },
+          }),
+        });
+      }
+    };
+    const adapter = new LiveAgentRuntimeAdapter({
+      endpoint: 'ws://127.0.0.1:18789',
+      sessionKey: 'main',
+      webSocketFactory: () => socket,
+      timeoutMs: 400,
+      latencyMs: 0,
+    });
+    const tutor = getAgentPresetById('tutor');
+
+    expect(tutor).toBeDefined();
+
+    const responsePromise = adapter.sendMessage({
+      preset: tutor!,
+      userMessage: makeUserMessage('what should I do next?'),
+      conversation: [],
+      availableSkills: [],
+    });
+
+    socket.emit('open');
+
+    const result = await responsePromise;
+
+    expect(result.text).toBe('current response');
+    expect(historyRequestCount).toBe(2);
   });
 
   it('falls back deterministically when endpoint is not configured', async () => {

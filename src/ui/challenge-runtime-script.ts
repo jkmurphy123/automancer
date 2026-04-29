@@ -292,6 +292,8 @@ export function renderChallengeRuntimeScript(
               title: challenge.title,
               summary: challenge.summary,
               category: challenge.category,
+              difficulty: challenge.difficulty,
+              description: challenge.fullDescription,
             },
           }),
         );

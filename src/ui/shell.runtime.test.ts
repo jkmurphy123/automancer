@@ -7,6 +7,7 @@ import { renderAppShell } from './shell.js';
 
 interface DomHarness {
   calls: string[];
+  messageBodies: Array<{ presetId?: string; text?: string }>;
   dom: JSDOM;
 }
 
@@ -27,6 +28,7 @@ function createDom(preloadedProfile?: string): DomHarness {
   );
   const html = renderAppShell(appState);
   const calls: string[] = [];
+  const messageBodies: Array<{ presetId?: string; text?: string }> = [];
   const sessionId = 'session-1';
 
   const dom = new JSDOM(html, {
@@ -38,7 +40,7 @@ function createDom(preloadedProfile?: string): DomHarness {
         window.localStorage.setItem('openclawTutorProfile.v1', preloadedProfile);
       }
 
-      window.fetch = async (input: unknown, init?: { method?: string }): Promise<unknown> => {
+      window.fetch = async (input: unknown, init?: { method?: string; body?: string }): Promise<unknown> => {
         const method = init?.method ?? 'GET';
         const url = String(input);
         calls.push(`${method} ${url}`);
@@ -52,6 +54,8 @@ function createDom(preloadedProfile?: string): DomHarness {
         }
 
         if (url.endsWith(`/api/runtime/sessions/${sessionId}/messages`) && method === 'POST') {
+          const payload = typeof init?.body === 'string' ? (JSON.parse(init.body) as { presetId?: string; text?: string }) : {};
+          messageBodies.push(payload);
           return jsonResponse({
             responseText: 'Assistant says hi',
             systemNote: 'mock system note',
@@ -91,7 +95,7 @@ function createDom(preloadedProfile?: string): DomHarness {
   });
 
   openWindows.push(dom.window as unknown as { close: () => void });
-  return { calls, dom };
+  return { calls, messageBodies, dom };
 }
 
 async function flush(): Promise<void> {
@@ -210,7 +214,7 @@ describe('renderAppShell runtime behaviors', () => {
   });
 
   it('sends a chat message and refreshes runtime events', async () => {
-    const { calls, dom } = createDom();
+    const { calls, messageBodies, dom } = createDom();
     const { document } = dom.window;
 
     await flush();
@@ -244,6 +248,10 @@ describe('renderAppShell runtime behaviors', () => {
     expect(calls.some((entry) => entry === 'POST /api/runtime/sessions')).toBe(true);
     expect(calls.some((entry) => entry === 'POST /api/runtime/sessions/session-1/messages')).toBe(true);
     expect(calls.some((entry) => entry === 'GET /api/runtime/sessions/session-1/events?limit=20')).toBe(true);
+    const runtimeMessagePayload = messageBodies.at(-1);
+    expect(runtimeMessagePayload?.text).toContain('Use the active challenge context below to ground your response.');
+    expect(runtimeMessagePayload?.text).toContain('Challenge ID:');
+    expect(runtimeMessagePayload?.text).toContain('Learner message:\nHello runtime');
   });
 
   it('executes a skill and appends activity + chat output', async () => {

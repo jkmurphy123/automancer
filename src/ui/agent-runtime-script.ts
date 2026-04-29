@@ -106,6 +106,51 @@ export function renderAgentInteractionScript(
 
       const normalizeText = (value) => String(value ?? '').trim();
 
+      const readActiveChallengeFromDom = () => {
+        const id = normalizeText(document.querySelector('[data-active-id]')?.textContent ?? '');
+        const title = normalizeText(document.querySelector('[data-active-title]')?.textContent ?? '');
+        const summary = normalizeText(document.querySelector('[data-active-summary]')?.textContent ?? '');
+        const category = normalizeText(document.querySelector('[data-active-category]')?.textContent ?? '');
+        const difficulty = normalizeText(document.querySelector('[data-active-difficulty]')?.textContent ?? '');
+        const description = normalizeText(document.querySelector('[data-active-description]')?.textContent ?? '');
+
+        if (id.length === 0 || title.length === 0) {
+          return null;
+        }
+
+        return {
+          id,
+          title,
+          summary,
+          category,
+          difficulty,
+          description,
+        };
+      };
+
+      const buildChallengeContextPrompt = (userText) => {
+        const cleanedUserText = normalizeText(userText);
+        if (!state.activeChallenge) {
+          return cleanedUserText;
+        }
+
+        const challenge = state.activeChallenge;
+        const challengeLines = [
+          'Use the active challenge context below to ground your response.',
+          'Challenge ID: ' + challenge.id,
+          'Challenge title: ' + challenge.title,
+          'Challenge summary: ' + (challenge.summary || 'n/a'),
+          'Challenge category: ' + (challenge.category || 'n/a'),
+          'Challenge difficulty: ' + (challenge.difficulty || 'n/a'),
+          'Challenge description: ' + (challenge.description || 'n/a'),
+          '',
+          'Learner message:',
+          cleanedUserText,
+        ];
+
+        return challengeLines.join('\\n');
+      };
+
       const getDockCardByAgentId = (agentId) =>
         Array.from(elements.dockCards).find((candidate) => candidate.getAttribute('data-agent-id') === agentId) ?? null;
 
@@ -578,7 +623,7 @@ export function renderAgentInteractionScript(
             method: 'POST',
             body: JSON.stringify({
               presetId: preset.id,
-              text: userMessage.text,
+              text: buildChallengeContextPrompt(userMessage.text),
             }),
           });
 
@@ -783,6 +828,7 @@ export function renderAgentInteractionScript(
         refreshSkillRelevance();
       });
 
+      state.activeChallenge = readActiveChallengeFromDom();
       renderMessages();
       renderSystemMessages();
       renderActivity();
